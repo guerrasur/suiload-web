@@ -669,7 +669,7 @@ $("pedido-form").addEventListener("submit", async (e) => {
       guardado = await api("/api/pedidos", { method: "POST", body: JSON.stringify(body) });
     }
     // Guardar/actualizar cliente para autocompletado futuro.
-    if (body.cliente_nombre) saveClienteQuiet(body);
+    if (body.cliente_nombre && _cfgCache?.guardar_clientes_auto !== "false") saveClienteQuiet(body);
     resetForm();
     await loadDay();
     toast(editando ? `Cambios guardados en el pedido N° ${guardado.numero ?? "—"}` : `Pedido N° ${guardado.numero ?? "—"} guardado`, "ok");
@@ -707,6 +707,10 @@ function resetForm() {
   $("pedido-form").reset();
   $("f-fecha").value = state.fecha;
   $("f-envio").value = _cfgCache ? _cfgCache.costo_envio_default : 3000;
+  $("f-no-envio").checked = _cfgCache?.no_cobrar_envio_default === "true";
+  $("f-tipo").value = _cfgCache?.tipo_pedido_default || "Envío";
+  $("f-pago").value = _cfgCache?.metodo_pago_default || "Efectivo";
+  $("f-vuelto").value = _cfgCache?.pago_efectivo_default || "";
   $("form-title").textContent = "📝 Nuevo pedido";
   $("btn-guardar").textContent = "Guardar pedido";
   fillRepartidorSelect($("f-repartidor"), repartidorDefault());
@@ -716,7 +720,7 @@ function resetForm() {
 // Si hay un único repartidor cargado para el día, se propone por defecto en
 // pedidos nuevos (no pisa una edición en curso ni una elección ya hecha).
 function repartidorDefault() {
-  return state.repartidoresDia.length === 1 ? state.repartidoresDia[0] : "";
+  return _cfgCache?.asignar_repartidor_auto !== "false" && state.repartidoresDia.length === 1 ? state.repartidoresDia[0] : "";
 }
 
 // ------------------------------------------------------- cliente autocomplete
@@ -2740,6 +2744,13 @@ async function loadConfig() {
   $("c-sinfact").value = _cfgCache.hora_alerta_sin_facturar;
   $("c-limite").value = _cfgCache.hora_limite_pedidos;
   $("c-envio").value = _cfgCache.costo_envio_default;
+  $("c-no-envio").checked = _cfgCache.no_cobrar_envio_default === "true";
+  $("c-tipo-pedido").value = _cfgCache.tipo_pedido_default || "Envío";
+  $("c-pago").value = _cfgCache.metodo_pago_default || "Efectivo";
+  $("c-vuelto").value = _cfgCache.pago_efectivo_default || "";
+  $("c-guardar-clientes").checked = _cfgCache.guardar_clientes_auto !== "false";
+  $("c-asignar-repartidor").checked = _cfgCache.asignar_repartidor_auto !== "false";
+  $("c-auto-update").checked = _cfgCache.buscar_actualizaciones_auto !== "false";
   $("c-direccion-local").value = _cfgCache.direccion_local || "";
   $("c-ciudad-default").value = _cfgCache.ciudad_default || "";
 }
@@ -2750,13 +2761,23 @@ $("btn-guardar-config").addEventListener("click", async () => {
     hora_alerta_sin_facturar: $("c-sinfact").value.trim(),
     hora_limite_pedidos: $("c-limite").value.trim(),
     costo_envio_default: +$("c-envio").value,
+    no_cobrar_envio_default: $("c-no-envio").checked,
+    tipo_pedido_default: $("c-tipo-pedido").value,
+    metodo_pago_default: $("c-pago").value,
+    pago_efectivo_default: $("c-vuelto").value.trim(),
+    guardar_clientes_auto: $("c-guardar-clientes").checked,
+    asignar_repartidor_auto: $("c-asignar-repartidor").checked,
+    buscar_actualizaciones_auto: $("c-auto-update").checked,
     direccion_local: $("c-direccion-local").value.trim(),
     ciudad_default: $("c-ciudad-default").value.trim(),
   };
+  try {
   _cfgCache = await api("/api/config", { method: "PUT", body: JSON.stringify(body) });
   aplicarNombreLocal(_cfgCache.nombre_local);
   $("config-ok").textContent = "✓ Guardado";
   setTimeout(() => ($("config-ok").textContent = ""), 2000);
+  toast("Configuración guardada. Los valores se aplican al próximo pedido nuevo.", "ok");
+  } catch (err) { toast(err.message, "error"); }
 });
 
 // ----------------------------------------------------- cierre de modales
@@ -2860,7 +2881,7 @@ function pedirNombreLocalSiFalta() {
   await loadPendientes();
   // Al iniciar el día (si es hoy): preguntar los repartidores y el plato del
   // día que todavía no se hayan cargado, uno después del otro.
-  if (state.fecha === todayISO()) {
+  if (state.fecha === todayISO() && !sessionStorage.getItem('suiload-update-draft')) {
     const necesitaRep = state.repartidoresDia.length === 0;
     const necesitaPdd = !state.platoDia.definido;
     if (necesitaRep) {
@@ -2878,6 +2899,8 @@ function pedirNombreLocalSiFalta() {
   api("/api/version").then((r) => {
     if (r.version) $("app-version").textContent = "v" + r.version;
   }).catch(() => {});
+  window.SuiloadAppReady = true;
+  document.dispatchEvent(new Event("suiload-ready"));
 })();
 
 // El refresco automático no debe interrumpir al usuario: hay un modal abierto,

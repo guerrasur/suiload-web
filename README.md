@@ -54,3 +54,21 @@ firebase deploy --only hosting --project suiload
 No requiere Firestore, Authentication, Functions ni plan Blaze. Hosting
 sigue sujeto a las cuotas de Firebase. La actualización de código no toca
 IndexedDB: los datos sobreviven en el mismo origen.
+
+## Configuración y actualización (web v1.0.1)
+
+Configuración permite definir no cobrar envío, tipo y medio de pago, detalle
+de efectivo, guardado automático de clientes y asignación del único repartidor.
+Se aplican sólo a nuevos pedidos, son independientes por navegador y se incluyen
+en las copias JSON. Las bases anteriores reciben los valores predeterminados
+sin perder sus registros.
+
+La app comprueba `version.json` al abrir, volver a la pestaña, recuperar conexión
+y cada cinco minutos. Aplica la nueva versión automáticamente, sin pedir confirmación.
+Conserva en la pestaña el pedido en curso y los ajustes sin guardar; espera
+a que terminen las ventanas modales y las ediciones de la tabla. También se puede comprobar manualmente desde Actualizar app.
+Las actualizaciones automáticas se pueden desactivar en Configuración.
+Los recursos usan URLs versionadas y Hosting revalida el contenido. Cada release
+debe actualizar VERSION, web/version.js, web/version.json, /api/version y
+las URLs de JS/CSS de web/index.html. Publicar en Firebase sigue siendo un
+paso separado: el actualizador detecta las versiones ya desplegadas.

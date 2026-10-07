@@ -2,7 +2,7 @@
 // Independent browser edition. IndexedDB is the authoritative database.
 // Each operation loads and commits within one exclusive cross-tab lock.
 (() => {
-  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:""};
+  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true"};
   const fresh = () => ({schema:1, config:{...defaults}, platos:structuredClone(window.SUILOAD_SEED), clientes:[], pedidos:[], cuentas:[], repartidores:{}, platosDia:{}, geocache:{}, seq:100});
   const today = () => new Date().toLocaleDateString("en-CA");
   const now = () => {const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,-1);};
@@ -21,7 +21,7 @@
   });
   async function read() {
     const c=await db();
-    return new Promise((resolve,reject)=>{const t=c.transaction("data","readonly"),r=t.objectStore("data").get("state");r.onsuccess=()=>resolve(r.result||fresh());r.onerror=()=>reject(r.error);});
+    return new Promise((resolve,reject)=>{const t=c.transaction("data","readonly"),r=t.objectStore("data").get("state");r.onsuccess=()=>resolve(r.result ? {...r.result, config:{...defaults,...r.result.config}} : fresh());r.onerror=()=>reject(r.error);});
   }
   async function write(s) {
     const c=await db();
@@ -80,9 +80,16 @@
     const parts=path.split("/").filter(Boolean).slice(1), [domain,id,action,subid,subaction]=parts;
     const fecha=q.get("fecha")||today();const next=()=>++s.seq;
     const day=()=>s.pedidos.filter(p=>p.fecha===fecha&&!p.anulado);
-    if(domain==="version")return {version:"1.0.0 web"};
+    if(domain==="version")return {version:"1.0.1 web"};
     if(domain==="config") {
-      if(method==="PUT")for(const k of Object.keys(defaults))if(b[k]!=null)s.config[k]=String(b[k]);
+      if(method==="PUT") {
+        const cfg={...s.config,...b};
+        if(!["Envío","Reserva"].includes(cfg.tipo_pedido_default))throw Error("Tipo predeterminado inválido");
+        if(!["Efectivo","Transferencia","QR","Posnet"].includes(cfg.metodo_pago_default))throw Error("Medio de pago predeterminado inválido");
+        for(const k of ["minutos_demora_salida","costo_envio_default"])if(!Number.isFinite(Number(cfg[k]))||Number(cfg[k])<0)throw Error("Ingresá valores positivos en demora y envío");
+        for(const k of ["hora_alerta_sin_facturar","hora_limite_pedidos"])if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg[k]))throw Error("Ingresá horarios válidos (HH:MM)");
+        for(const k of Object.keys(defaults))if(b[k]!=null)s.config[k]=String(b[k]);
+      }
       return s.config;
     }
     if(domain==="clientes") {

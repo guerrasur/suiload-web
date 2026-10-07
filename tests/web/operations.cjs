@@ -28,8 +28,17 @@ const c=context(),api=(url,b,method='POST')=>c.window.SuiloadLocal.request(url,b
  const before=await c.window.SuiloadLocal.snapshot();
  await assert.rejects(()=>c.window.SuiloadLocal.restore(JSON.stringify({app:'suiload',data:{schema:1}})),/Copia/);
  assert.deepEqual(await c.window.SuiloadLocal.snapshot(),before);
+ // Existing browser data from v1.0.0 gets safe defaults without losing orders.
+ delete stored.config.no_cobrar_envio_default;
+ assert.equal((await api('/api/config')).no_cobrar_envio_default,'false');
+ await api('/api/config',{no_cobrar_envio_default:true,metodo_pago_default:'Transferencia',tipo_pedido_default:'Reserva',guardar_clientes_auto:false},'PUT');
+ await assert.rejects(()=>api('/api/config',{metodo_pago_default:'Inválido'},'PUT'),/predeterminado/);
+ await assert.rejects(()=>api('/api/config',{hora_limite_pedidos:'30:99'},'PUT'),/horarios/);
+ assert.equal((await api('/api/pedidos?fecha=2026-10-07'))[0].total,21000);
  const reload=context();assert.equal((await reload.window.SuiloadLocal.request('/api/config')).nombre_local,'Prueba');
  assert.equal((await reload.window.SuiloadLocal.request('/api/pedidos?fecha=2026-10-07')).length,2);
+ assert.equal((await reload.window.SuiloadLocal.request('/api/config')).no_cobrar_envio_default,'true');
+ assert.equal((await reload.window.SuiloadLocal.request('/api/config')).guardar_clientes_auto,'false');
  await c.window.SuiloadLocal.restore(JSON.stringify({app:'suiload',data:before}));
  const snapshot=await c.window.SuiloadLocal.snapshot();
  fs.writeFileSync('/workspace/scratch/4a4a2ad47002/test-export.xlsx',c.window.SuiloadExcel.build(snapshot,'2026-10-07'));

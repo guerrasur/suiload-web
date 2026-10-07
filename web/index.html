@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Suiload — Suipacha Loader web</title>
   <link rel="icon" href="/icon.ico" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles.css?v=1.0.1" />
 </head>
 <body>
   <header class="topbar">
@@ -22,6 +22,10 @@
 
   <main>
     <div id="storage-status" class="banner info show">Los datos se guardan en este navegador y dispositivo.</div>
+    <div id="update-banner" class="banner info" role="status">
+      <span id="update-message"></span>
+      <button type="button" class="btn secondary sm" id="apply-update">Actualizar ahora</button>
+    </div>
     <!-- ============ PEDIDOS ============ -->
     <section id="view-pedidos" class="view active">
       <div id="banner-pendientes" class="banner info"></div>
@@ -342,7 +346,7 @@
         </div>
         <div class="field" style="margin-bottom:.6rem;">
           <label>Costo de envío por defecto</label>
-          <input type="number" id="c-envio" step="100" />
+          <input type="number" id="c-envio" step="any" min="0" />
         </div>
         <div class="field" style="margin-bottom:.6rem;">
           <label>Dirección del local (punto de partida de las rutas)</label>
@@ -352,6 +356,34 @@
           <label>Ciudad/zona (se agrega a las direcciones en los links de Google Maps y al ubicarlas)</label>
           <input id="c-ciudad-default" placeholder="Ej: Buenos Aires, Argentina" />
           <small class="muted">Importante: sin esto, una calle a secas puede caer en otra localidad.</small>
+        </div>
+        <h3>Valores para nuevos pedidos</h3>
+        <p class="muted">Podés cambiarlos en cada pedido. No modifican los pedidos existentes.</p>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label><input type="checkbox" id="c-no-envio" /> No cobrar envío por defecto</label>
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label for="c-tipo-pedido">Tipo de pedido por defecto</label>
+          <select id="c-tipo-pedido"><option>Envío</option><option>Reserva</option></select>
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label for="c-pago">Medio de pago por defecto</label>
+          <select id="c-pago"><option>Efectivo</option><option>Transferencia</option><option>QR</option><option>Posnet</option></select>
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label for="c-vuelto">Paga con: valor por defecto para efectivo</label>
+          <input id="c-vuelto" placeholder="Vacío, Justo o un monto" />
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label><input type="checkbox" id="c-guardar-clientes" /> Guardar nuevos clientes automáticamente al cargar pedidos</label>
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label><input type="checkbox" id="c-asignar-repartidor" /> Asignar automáticamente cuando hay un solo repartidor</label>
+        </div>
+        <h3>Actualizaciones</h3>
+        <div class="field" style="margin-bottom:1rem;">
+          <label><input type="checkbox" id="c-auto-update" /> Buscar actualizaciones automáticamente</label>
+          <small class="muted">Se comprueba al abrir, al volver a la pestaña y cada 5 minutos. La versión nueva se aplica automáticamente, conservando el pedido en curso. Espera a que cierres las ventanas abiertas. Tus datos guardados se conservan.</small>
         </div>
         <button class="btn" id="btn-guardar-config">Guardar configuración</button>
         <span id="config-ok" class="muted" style="margin-left:.6rem;"></span>
@@ -538,11 +570,12 @@
 
   <div id="toasts" aria-live="polite"></div>
 
-  <script src="/seed.js"></script>
-  <script src="/routes.js"></script>
-  <script src="/local-api.js"></script>
-  <script src="/excel.js"></script>
-  <script src="/app.js"></script>
-  <script src="/device.js"></script>
+  <script src="/version.js?v=1.0.1"></script>
+  <script src="/seed.js?v=1.0.1"></script>
+  <script src="/routes.js?v=1.0.1"></script>
+  <script src="/local-api.js?v=1.0.1"></script>
+  <script src="/excel.js?v=1.0.1"></script>
+  <script src="/app.js?v=1.0.1"></script>
+  <script src="/device.js?v=1.0.1"></script>
 </body>
 </html>
