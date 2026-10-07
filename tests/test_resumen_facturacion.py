@@ -1,0 +1,79 @@
+"""Resumen de caja y facturación: bucketing por método de pago."""
+FECHA = "2030-03-05"
+
+
+def _crear(client, metodo, total_item, tipo="Reserva", **extra):
+    body = {
+        "fecha": FECHA,
+        "cliente_nombre": "Test",
+        "tipo": tipo,
+        "metodo_pago": metodo,
+        "items": [{"nombre": "Milanesa", "cantidad": 1, "precio_unitario": total_item}],
+        **extra,
+    }
+    r = client.post("/api/pedidos", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_resumen_por_metodo(client):
+    _crear(client, "Efectivo", 10000)
+    _crear(client, "Efectivo", 5000)
+    _crear(client, "QR", 8000)
+    anulado = _crear(client, "Transferencia", 99999)
+    client.post(f"/api/pedidos/{anulado['id']}/anular")
+
+    r = client.get(f"/api/resumen?fecha={FECHA}").json()
+    assert r["cantidad"] == 3
+    assert r["total"] == 23000
+    assert r["por_metodo"]["Efectivo"] == 15000
+    assert r["por_metodo"]["QR"] == 8000
+    assert r["por_metodo"]["Transferencia"] == 0  # el anulado no suma
+
+
+def test_facturacion_items_y_envios(client):
+    _crear(client, "Efectivo", 10000, tipo="Envío", costo_envio=3000)
+    _crear(client, "Efectivo", 10000)
+    _crear(client, "Transferencia", 12000)
+
+    r = client.get(f"/api/facturacion?fecha={FECHA}").json()
+    assert r["metodos"] == ["Efectivo", "Transferencia"]
+    ef = r["por_metodo"]["Efectivo"]
+    assert ef["pedidos"] == 2
+    assert ef["envios"] == 1
+    assert ef["items"] == [{"nombre": "Milanesa", "cantidad": 2}]
+    assert ef["total"] == 23000
+    assert r["por_metodo"]["Transferencia"]["total"] == 12000
+
+
+def test_facturacion_no_cuenta_envio_gratis(client):
+    # Envío con costo pero marcado "no se cobra": no se factura el envío ni
+    # su costo entra en el total.
+    _crear(
+        client, "Efectivo", 10000,
+        tipo="Envío", costo_envio=3000, no_cobrar_envio=True,
+    )
+    # Envío normal cobrado, para contrastar.
+    _crear(client, "Efectivo", 10000, tipo="Envío", costo_envio=3000)
+
+    ef = client.get(f"/api/facturacion?fecha={FECHA}").json()["por_metodo"]["Efectivo"]
+    assert ef["pedidos"] == 2
+    assert ef["envios"] == 1          # sólo el cobrado
+    assert ef["total"] == 23000       # 10000 + (10000 + 3000)
+
+
+def test_facturacion_excluye_ya_facturados(client):
+    # Un pedido ya marcado como facturado no debe volver a figurar en la
+    # planilla de cierre (ítems, envíos ni total a facturar), aunque siga
+    # contando para el conteo de pedidos/facturados del método.
+    pendiente = _crear(client, "Efectivo", 10000)
+    facturado = _crear(client, "Efectivo", 10000, tipo="Envío", costo_envio=3000)
+    client.patch(f"/api/pedidos/{facturado['id']}", json={"facturado": True})
+
+    ef = client.get(f"/api/facturacion?fecha={FECHA}").json()["por_metodo"]["Efectivo"]
+    assert ef["pedidos"] == 2
+    assert ef["facturados"] == 1
+    assert ef["envios"] == 0                                   # el envío ya facturado no cuenta
+    assert ef["items"] == [{"nombre": "Milanesa", "cantidad": 1}]  # sólo el pendiente
+    assert ef["total"] == 23000                                # sigue sumando para el total del día
+    assert pendiente["id"] != facturado["id"]

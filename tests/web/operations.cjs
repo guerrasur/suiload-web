@@ -1,0 +1,41 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+let stored;
+// Test-only storage adapter to exercise API logic and reload behavior.
+const indexedDB={open(){const r={};setImmediate(()=>{r.result={createObjectStore(){},transaction(){const t={objectStore(){return {get(){const req={};setImmediate(()=>{req.result=structuredClone(stored);req.onsuccess();});return req;},put(s){stored=structuredClone(s);setImmediate(()=>t.oncomplete());}};}};return t;}};r.onupgradeneeded();r.onsuccess();});return r;}};
+function context(){const c={window:{},indexedDB,navigator:{},location:{origin:'https://suiload.web.app'},URL,URLSearchParams,structuredClone,Date,Number,Math,Map,Set,Promise,setTimeout,Blob,TextEncoder,Uint8Array,DataView};vm.createContext(c);for(const p of ['seed.js','local-api.js','routes.js','excel.js'])vm.runInContext(fs.readFileSync('web/'+p,'utf8'),c);return c;}
+const c=context(),api=(url,b,method='POST')=>c.window.SuiloadLocal.request(url,b?{method,body:JSON.stringify(b)}:{method:'GET'});
+(async()=>{
+ await c.window.SuiloadLocal.ready();
+ await api('/api/config',{nombre_local:'Prueba'},'PUT');
+ const cliente=await api('/api/clientes',{nombre:'Cliente prueba'});
+ const body={fecha:'2026-10-07',cliente_nombre:'Cliente prueba',tipo:'Envío',items:[{nombre:'Cobb',cantidad:2,precio_unitario:10000}],costo_envio:3000,descuento_tipo:'porcentaje',descuento_valor:10,metodo_pago:'Efectivo'};
+ const [a,b]=await Promise.all([api('/api/pedidos',body),api('/api/pedidos',body)]);
+ assert.equal(a.total,21000);assert.notEqual(a.numero,b.numero);
+ await api('/api/pedidos/'+a.id,{repartidor:'Uno',orden_ruta:0},'PATCH');
+ const moved=await api('/api/pedidos/'+a.id,{repartidor:'Dos'},'PATCH');assert.equal(moved.orden_ruta,null);
+ await assert.rejects(()=>api('/api/pedidos/'+b.id,{},'DELETE'),/anulados/);
+ const account=await api('/api/cuentas',{cliente_id:cliente.id,tipo:'platos'});
+ const carga=await api(`/api/cuentas/${account.id}/movimientos`,{tipo:'carga',cantidad:3});
+ await api(`/api/cuentas/${account.id}/movimientos`,{tipo:'retiro',cantidad:2,plato:'Cobb'});
+ await assert.rejects(()=>api(`/api/cuentas/${account.id}/movimientos`,{tipo:'retiro',cantidad:2,plato:'Cobb'}),/Quedan 1/);
+ await assert.rejects(()=>api(`/api/cuentas/${account.id}/movimientos/${carga.id}`,{},'DELETE'),/retiros posteriores/);
+ const cliente2=await api('/api/clientes',{nombre:'Semanal'});
+ const semanal=await api('/api/cuentas',{cliente_id:cliente2.id,tipo:'semanal'});
+ await api(`/api/cuentas/${semanal.id}/pedidos`,{fecha:'2026-10-07',items:[{plato:'Cobb',cantidad:2,precio_unitario:100,precio_extra:20}]});
+ const cierre=await api(`/api/cuentas/${semanal.id}/cierres`,{hasta:'2026-10-07'});assert.equal(cierre.total,240);
+ await api(`/api/cuentas/${semanal.id}/cierres/${cierre.id}/pagado`,{});
+ assert.equal((await api(`/api/cuentas/${semanal.id}`)).saldo,0);
+ const before=await c.window.SuiloadLocal.snapshot();
+ await assert.rejects(()=>c.window.SuiloadLocal.restore(JSON.stringify({app:'suiload',data:{schema:1}})),/Copia/);
+ assert.deepEqual(await c.window.SuiloadLocal.snapshot(),before);
+ const reload=context();assert.equal((await reload.window.SuiloadLocal.request('/api/config')).nombre_local,'Prueba');
+ assert.equal((await reload.window.SuiloadLocal.request('/api/pedidos?fecha=2026-10-07')).length,2);
+ await c.window.SuiloadLocal.restore(JSON.stringify({app:'suiload',data:before}));
+ const snapshot=await c.window.SuiloadLocal.snapshot();
+ fs.writeFileSync('/workspace/scratch/4a4a2ad47002/test-export.xlsx',c.window.SuiloadExcel.build(snapshot,'2026-10-07'));
+ const m=[[0,3,5,8],[4,0,2,3],[1,6,0,3],[2,4,5,0]],r=c.window.SuiloadRoutes;
+ const permutations=a=>a.length<=1?[a]:a.flatMap((v,i)=>permutations(a.filter((_,j)=>i!==j)).map(p=>[v,...p]));
+ const best=Math.min(...permutations([0,1,2]).map(p=>r.cost(m,p)));assert.equal(r.cost(m,r.order(m)),best);
+ const groups=r.distribute(m,[[0,0],[1,0],[2,0]],2);assert.equal(new Set(groups.flat()).size,3);assert.ok(groups.every(g=>g.length));
+ console.log('PASS: totals, concurrent writes, numbering, invalid deletes, prepaid balance, weekly closures, backup validation, reload, XLSX, directed routes.');
+})().catch(e=>{console.error(e);process.exitCode=1;});

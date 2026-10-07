@@ -1,0 +1,168 @@
+"""Optimización de rutas de envío: agrupa los pedidos del día por cercanía
+entre los repartidores disponibles y arma links de Google Maps para cada
+grupo."""
+from __future__ import annotations
+
+from datetime import date, datetime
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+
+from .. import config as cfg
+from ..database import get_db
+from ..geocoding import geocode
+from ..models import Pedido, RepartidorDia
+from ..routing import google_maps_route_link
+from ..route_costs import travel_costs, distribute, order, cost
+
+router = APIRouter(prefix="/api/rutas", tags=["rutas"])
+
+
+@router.get("")
+def optimizar(fecha: date | None = None, db: Session = Depends(get_db)):
+    fecha = fecha or date.today()
+
+    repartidores = (
+        db.query(RepartidorDia)
+        .filter(RepartidorDia.fecha == fecha)
+        .order_by(RepartidorDia.id)
+        .all()
+    )
+    nombres = [r.nombre for r in repartidores]
+    if not nombres:
+        raise HTTPException(400, "Cargá primero los repartidores del día.")
+
+    ahora = datetime.now()
+    pedidos = (
+        db.query(Pedido)
+        .filter(
+            Pedido.fecha == fecha,
+            Pedido.tipo == "Envío",
+            Pedido.anulado.is_(False),
+            Pedido.hora_salida.is_(None),
+            or_(
+                Pedido.hora_salida_programada.is_(None),
+                Pedido.hora_salida_programada <= ahora,
+            ),
+        )
+        .order_by(Pedido.hora_pedido)
+        .all()
+    )
+    if not pedidos:
+        return {"fecha": fecha.isoformat(), "repartidores_dia": nombres, "grupos": [], "sin_geocodificar": []}
+
+    ciudad_default = cfg.get_value(db, "ciudad_default")
+    direccion_local = cfg.get_value(db, "direccion_local")
+
+    ubicados: list[Pedido] = []
+    coords: list[tuple[float, float]] = []
+    sin_geocodificar: list[Pedido] = []
+    for p in pedidos:
+        punto = geocode(db, p.cliente_direccion, ciudad_default)
+        if punto is None:
+            sin_geocodificar.append(p)
+        else:
+            ubicados.append(p)
+            coords.append(punto)
+
+    origen = geocode(db, direccion_local, ciudad_default) if direccion_local else None
+
+    matrix, criterio, aviso = travel_costs(origen, coords)
+    grupos_idx = distribute(matrix, coords, len(nombres))
+
+    grupos = []
+    for i, idxs in enumerate(grupos_idx):
+        etiqueta = chr(ord("A") + i)
+        pedidos_en_orden = [ubicados[j] for j in idxs]
+        direcciones = [p.cliente_direccion for p in pedidos_en_orden]
+        grupos.append({
+            "etiqueta": etiqueta,
+            "minutos_estimados": round(cost(matrix, idxs) / 60, 1) if criterio == "calles" else None,
+            "pedidos": [
+                {"id": p.id, "numero": p.numero, "cliente_nombre": p.cliente_nombre,
+                 "cliente_direccion": p.cliente_direccion, "cliente_telefono": p.cliente_telefono}
+                for p in pedidos_en_orden
+            ],
+            "maps_link": google_maps_route_link(
+                direccion_local, direcciones, ciudad_default, volver_al_origen=True
+            ),
+        })
+
+    return {
+        "fecha": fecha.isoformat(),
+        "repartidores_dia": nombres,
+        "criterio": criterio,
+        "aviso": aviso,
+        "grupos": grupos,
+        "sin_geocodificar": [
+            {"id": p.id, "numero": p.numero, "cliente_nombre": p.cliente_nombre,
+             "cliente_direccion": p.cliente_direccion}
+            for p in sin_geocodificar
+        ],
+    }
+
+
+@router.get("/repartidor")
+def optimizar_repartidor(repartidor: str, fecha: date | None = None, db: Session = Depends(get_db)):
+    """Ruta optimizada para los pedidos ya asignados a mano a un repartidor
+    (a diferencia de `/api/rutas`, no reagrupa: toma tal cual lo que cada
+    pedido tiene cargado en `repartidor`)."""
+    fecha = fecha or date.today()
+    repartidor = repartidor.strip()
+    if not repartidor:
+        raise HTTPException(400, "Falta el repartidor.")
+
+    ahora = datetime.now()
+    pedidos = (
+        db.query(Pedido)
+        .filter(
+            Pedido.fecha == fecha,
+            Pedido.tipo == "Envío",
+            Pedido.anulado.is_(False),
+            Pedido.hora_salida.is_(None),
+            or_(
+                Pedido.hora_salida_programada.is_(None),
+                Pedido.hora_salida_programada <= ahora,
+            ),
+            Pedido.repartidor == repartidor,
+        )
+        .order_by(Pedido.hora_pedido)
+        .all()
+    )
+    if len(pedidos) < 2:
+        raise HTTPException(400, f"{repartidor} tiene menos de 2 pedidos pendientes hoy.")
+
+    ciudad_default = cfg.get_value(db, "ciudad_default")
+    direccion_local = cfg.get_value(db, "direccion_local")
+
+    ubicados: list[Pedido] = []
+    coords: list[tuple[float, float]] = []
+    sin_geocodificar: list[Pedido] = []
+    for p in pedidos:
+        punto = geocode(db, p.cliente_direccion, ciudad_default)
+        if punto is None:
+            sin_geocodificar.append(p)
+        else:
+            ubicados.append(p)
+            coords.append(punto)
+
+    if len(ubicados) < 2:
+        raise HTTPException(400, "No se pudieron ubicar suficientes direcciones para armar la ruta.")
+
+    origen = geocode(db, direccion_local, ciudad_default) if direccion_local else None
+    matrix, criterio, aviso = travel_costs(origen, coords)
+    orden = order(matrix)
+    pedidos_en_orden = [ubicados[i] for i in orden]
+    direcciones = [p.cliente_direccion for p in pedidos_en_orden]
+
+    return {
+        "repartidor": repartidor,
+        "criterio": criterio,
+        "aviso": aviso,
+        "maps_link": google_maps_route_link(
+            direccion_local, direcciones, ciudad_default, volver_al_origen=True
+        ),
+        "pedidos": [{"id": p.id, "numero": p.numero} for p in pedidos_en_orden],
+        "sin_geocodificar": [{"id": p.id, "numero": p.numero} for p in sin_geocodificar],
+    }

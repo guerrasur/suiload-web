@@ -1,0 +1,186 @@
+"""Aplicación FastAPI: API + frontend estático."""
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+
+from . import config as cfg
+from .backup import hacer_backup, iniciar_backups_periodicos
+from .database import Base, SessionLocal, engine
+from .routers import clientes, cuentas, meta, pedidos, platos, rutas
+from .seed import seed_platos
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+# Columnas agregadas después de la creación original de la BD. create_all no
+# altera tablas existentes, así que se agregan acá si faltan (idempotente).
+_COLUMNAS_NUEVAS = [
+    ("clientes", "telefono", "VARCHAR NOT NULL DEFAULT ''"),
+    ("pedidos", "numero", "INTEGER"),
+    ("pedidos", "cliente_telefono", "VARCHAR NOT NULL DEFAULT ''"),
+    ("pedidos", "pagado", "BOOLEAN NOT NULL DEFAULT 0"),
+    ("pedidos", "hora_salida_programada", "DATETIME"),
+    ("pedidos", "orden_ruta", "INTEGER"),
+]
+
+
+def _migrar_columnas() -> None:
+    with engine.begin() as conn:
+        for tabla, columna, tipo in _COLUMNAS_NUEVAS:
+            filas = conn.execute(text(f"PRAGMA table_info({tabla})")).fetchall()
+            if filas and columna not in {f[1] for f in filas}:
+                conn.execute(
+                    text(f"ALTER TABLE {tabla} ADD COLUMN {columna} {tipo}")
+                )
+
+
+def _migrar_plato_dia_items() -> None:
+    """plato_dia guardaba antes un único plato del día por fecha (columnas
+    nombre/precio_efectivo/precio_lista, ya no declaradas en el modelo). Ahora
+    puede haber varios, en la tabla plato_dia_items. Instalaciones existentes
+    migran esas filas la primera vez que corre esta versión.
+
+    Las columnas viejas quedaban NOT NULL sin default a nivel SQL; como el
+    ORM ya no las conoce, cualquier INSERT nuevo (osea, plato del día de
+    cualquier fecha sin fila todavía) rompía con IntegrityError y el modal
+    de guardado quedaba "sin hacer nada" para el usuario. Por eso, además de
+    copiar los datos, se reconstruye la tabla sin esas columnas (SQLite no
+    soporta DROP COLUMN con NOT NULL sin rebuild)."""
+    try:
+        with engine.begin() as conn:
+            columnas = {
+                f[1] for f in conn.execute(text("PRAGMA table_info(plato_dia)")).fetchall()
+            }
+            if "nombre" not in columnas:
+                return  # instalación nueva: la tabla nunca tuvo esas columnas
+            if not conn.execute(text("SELECT 1 FROM plato_dia_items LIMIT 1")).fetchone():
+                filas = conn.execute(
+                    text(
+                        "SELECT fecha, nombre, precio_efectivo, precio_lista FROM plato_dia"
+                        " WHERE hay = 1 AND nombre != ''"
+                    )
+                ).fetchall()
+                for fecha, nombre, ef, li in filas:
+                    conn.execute(
+                        text(
+                            "INSERT INTO plato_dia_items (fecha, nombre, precio_efectivo, precio_lista)"
+                            " VALUES (:f, :n, :e, :l)"
+                        ),
+                        {"f": fecha, "n": nombre, "e": ef, "l": li},
+                    )
+            conn.execute(text("ALTER TABLE plato_dia RENAME TO plato_dia_legacy"))
+            conn.execute(
+                text(
+                    "CREATE TABLE plato_dia ("
+                    " fecha DATE NOT NULL PRIMARY KEY,"
+                    " hay BOOLEAN NOT NULL DEFAULT 1"
+                    ")"
+                )
+            )
+            conn.execute(
+                text("INSERT INTO plato_dia (fecha, hay) SELECT fecha, hay FROM plato_dia_legacy")
+            )
+            conn.execute(text("DROP TABLE plato_dia_legacy"))
+    except Exception as e:  # nunca impedir el arranque por esta migración
+        print(f"[aviso] No se pudo migrar plato_dia_items: {e}")
+
+
+def _migrar_tipos_pedido() -> None:
+    """Los tipos "Take away" y "Ventanilla" ya no existen: los dos
+    eran retiros en el local, igual que "Reserva", así que los pedidos viejos
+    pasan a ese tipo. Sin esto, editar un pedido histórico rompía con 422
+    (el tipo guardado ya no está en TIPOS_PEDIDO). Idempotente."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE pedidos SET tipo = 'Reserva'"
+                    " WHERE tipo IN ('Take away', 'Ventanilla')"
+                )
+            )
+    except Exception as e:  # nunca impedir el arranque por esto
+        print(f"[aviso] No se pudieron migrar los tipos de pedido: {e}")
+
+
+def _indice_unico_numero() -> None:
+    """Garantiza que no haya dos pedidos con el mismo número el mismo día.
+
+    SQLite no permite agregar constraints con ALTER TABLE, pero sí crear
+    índices sobre tablas existentes. Antes de crearlo se limpian duplicados
+    históricos (el bug de numeración por conteo podía repetir números): se
+    conserva el número en el pedido más viejo y se anula en el resto.
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE pedidos SET numero = NULL WHERE id NOT IN ("
+                    "  SELECT MIN(id) FROM pedidos WHERE numero IS NOT NULL"
+                    "  GROUP BY fecha, numero"
+                    ") AND numero IS NOT NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_pedidos_fecha_numero"
+                    " ON pedidos(fecha, numero) WHERE numero IS NOT NULL"
+                )
+            )
+    except Exception as e:  # nunca impedir el arranque por el índice
+        print(f"[aviso] No se pudo crear el índice único de números: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    _migrar_columnas()
+    _migrar_plato_dia_items()
+    _migrar_tipos_pedido()
+    _indice_unico_numero()
+    db = SessionLocal()
+    try:
+        cfg.ensure_defaults(db)
+        seed_platos(db)
+    finally:
+        db.close()
+    # Backup diario automático al arrancar (idempotente por fecha) y
+    # refresco periódico para no depender solo del momento de arranque.
+    hacer_backup()
+    iniciar_backups_periodicos()
+    yield
+
+
+app = FastAPI(title="Suipacha Loader — Gestor de Pedidos", lifespan=lifespan)
+
+app.include_router(platos.router)
+app.include_router(clientes.router)
+app.include_router(cuentas.router)
+app.include_router(pedidos.router)
+app.include_router(meta.router)
+app.include_router(rutas.router)
+
+
+@app.middleware("http")
+async def sin_cacheo_heuristico(request, call_next):
+    # Sin Cache-Control el navegador aplica cacheo heurístico (RFC 7234) y
+    # puede servir estáticos viejos ante un F5 normal después de actualizar
+    # (el updater preserva el mtime del zip vía shutil.copy2, así que
+    # Last-Modified no ayuda a invalidar). Forzamos revalidación siempre;
+    # sigue siendo barato porque FastAPI responde 304 con el ETag si no
+    # cambió nada.
+    response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+@app.get("/")
+def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+app.mount("/", StaticFiles(directory=STATIC_DIR), name="static")

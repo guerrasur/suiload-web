@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Suipacha Loader — Gestor de Pedidos</title>
+  <link rel="icon" href="/icon.ico" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🥗 <span id="local-name"></span>Suipacha Loader <span class="app-version" id="app-version"></span></h1>
+    <nav class="tabs">
+      <button data-tab="pedidos" class="active">Pedidos</button>
+      <button data-tab="carta">Carta</button>
+      <button data-tab="clientes">Clientes</button>
+      <button data-tab="cuentas">Cuentas</button>
+      <button data-tab="judiciales" title="Servicio en construcción">Cierre Judiciales</button>
+      <button data-tab="config">Configuración</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ============ PEDIDOS ============ -->
+    <section id="view-pedidos" class="view active">
+      <div id="banner-pendientes" class="banner info"></div>
+
+      <div class="card">
+        <div class="row between">
+          <h2 id="form-title">📝 Nuevo pedido</h2>
+          <div class="daynav">
+            <button type="button" class="btn secondary sm" id="btn-repartidores" title="Repartidores del día">🛵 <span id="rep-dia-label">Repartidores</span></button>
+            <button type="button" class="btn secondary sm" id="btn-plato-dia" title="Plato del día">🍽 <span id="pdd-dia-label">Plato del día</span></button>
+            <button type="button" class="btn ghost sm" id="day-prev" title="Día anterior" aria-label="Día anterior">◀</button>
+            <span class="today" id="day-label"></span>
+            <button type="button" class="btn ghost sm" id="day-next" title="Día siguiente" aria-label="Día siguiente">▶</button>
+            <button type="button" class="btn secondary sm" id="day-today">Hoy</button>
+          </div>
+        </div>
+
+        <div id="banner-hora" class="banner warn"></div>
+
+        <!-- Pegar y parsear el mensaje de WhatsApp: prellena el formulario con
+             reglas contra la Carta (sin IA). Ver parseMensajeWhatsApp en app.js. -->
+        <details class="wa-parser" id="wa-parser">
+          <summary>📋 Pegar mensaje de WhatsApp</summary>
+          <div class="wa-parser-body">
+            <p class="muted" style="font-size:.82rem;margin:.2rem 0 .5rem;">Pegá el mensaje del cliente y prellenamos cliente, dirección, ítems y pago. Revisá y corregí antes de guardar.</p>
+            <textarea id="wa-text" rows="5" placeholder="Ej.:&#10;Juan Pérez&#10;Av. Suipacha 1234, piso 3 depto B, timbre azul&#10;2 milanesas napolitanas y 1 tarta&#10;Efectivo, paga con 20000&#10;11 2345 6789"></textarea>
+            <div class="row" style="margin-top:.5rem;">
+              <button type="button" class="btn secondary sm" id="wa-parse">✨ Parsear al formulario</button>
+              <button type="button" class="btn ghost sm" id="wa-clear">Limpiar</button>
+            </div>
+            <div id="wa-report" class="wa-report hidden"></div>
+          </div>
+        </details>
+
+        <form id="pedido-form">
+          <div class="row">
+            <div class="field grow autocomplete">
+              <label>Cliente</label>
+              <input id="f-cliente" autocomplete="off" placeholder="Nombre del cliente" />
+              <div class="ac-list hidden" id="ac-cliente"></div>
+            </div>
+            <div class="field grow">
+              <label>Dirección</label>
+              <input id="f-direccion" placeholder="Dirección" />
+            </div>
+            <div class="field">
+              <label>Teléfono</label>
+              <input id="f-telefono" type="tel" placeholder="Opcional" autocomplete="off" />
+            </div>
+            <div class="field grow">
+              <label>Indicaciones</label>
+              <input id="f-indicaciones" placeholder="Timbre, piso…" />
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>Tipo</label>
+              <select id="f-tipo">
+                <option>Envío</option>
+                <option>Reserva</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Fecha</label>
+              <input type="date" id="f-fecha" />
+            </div>
+            <div class="field">
+              <label>Método de pago</label>
+              <select id="f-pago">
+                <option value="Efectivo">💵 Efectivo</option>
+                <option value="Transferencia">🏦 Transferencia</option>
+                <option value="QR">QR</option>
+                <option value="Posnet">Posnet</option>
+              </select>
+            </div>
+            <div class="field" id="wrap-vuelto">
+              <label>Paga con (vuelto)</label>
+              <input id="f-vuelto" placeholder="Justo o monto" />
+              <small class="muted" id="f-vuelto-calc"></small>
+            </div>
+            <div class="field" id="wrap-repartidor">
+              <label>Repartidor</label>
+              <select id="f-repartidor"></select>
+            </div>
+            <div class="field" id="wrap-hora-programada">
+              <label>Salida programada</label>
+              <input type="time" id="f-hora-programada" />
+              <small class="muted">Opcional</small>
+            </div>
+          </div>
+
+          <div class="field" style="margin:.6rem 0;">
+            <label>Ítems</label>
+            <div class="items-editor">
+              <div class="item-line" style="font-size:.75rem;color:var(--muted);">
+                <span>Plato</span><span>Cant.</span><span>Precio u.</span><span class="right">Subtotal</span><span></span>
+              </div>
+              <div id="items-list"></div>
+              <div class="row" style="margin-top:.4rem;">
+                <button type="button" class="btn secondary sm" id="add-item">+ Agregar plato</button>
+                <button type="button" class="btn ghost sm" id="add-pdd">+ Plato del día</button>
+                <span id="pdd-extra-botones"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="row" id="row-envio">
+            <div class="field">
+              <label>Costo de envío</label>
+              <input type="number" id="f-envio" step="100" min="0" />
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <label style="font-weight:500;color:var(--ink);"><input type="checkbox" id="f-no-envio" /> No cobrar envío</label>
+            </div>
+            <div class="field">
+              <label>Descuento</label>
+              <select id="f-desc-tipo">
+                <option value="">Sin descuento</option>
+                <option value="monto">Monto $</option>
+                <option value="porcentaje">Porcentaje %</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Valor descuento</label>
+              <input type="number" id="f-desc-valor" step="any" min="0" value="0" />
+            </div>
+            <div class="field grow">
+              <label>Notas</label>
+              <input id="f-notas" placeholder="Opcional" />
+            </div>
+          </div>
+
+          <div class="total-line">
+            <div>
+              <span class="muted">Total</span>
+              <div class="total-box" id="f-total">$0</div>
+            </div>
+            <div class="row">
+              <button type="button" class="btn ghost" id="btn-cancelar">Cancelar</button>
+              <button type="submit" class="btn" id="btn-guardar">Guardar pedido</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <!-- Resumen de caja -->
+      <details class="card resumen-card" id="resumen-details">
+        <summary>💰 Resumen de caja del día <span class="resumen-collapsed-hint" id="resumen-collapsed-hint"></span></summary>
+        <div id="resumen"></div>
+      </details>
+
+      <!-- Tabla del día -->
+      <div class="card">
+        <h2>📋 Pedidos del día</h2>
+        <div class="filters" id="filters">
+          <span class="muted">Filtros:</span>
+          <button class="chip active" data-f="todos">Todos</button>
+          <button class="chip" data-f="pend-salir">Pendientes de salir</button>
+          <button class="chip" data-f="pend-facturar">Pendientes de facturar</button>
+          <button class="chip" data-f="envio">Envío</button>
+          <button class="chip" data-f="reserva">Reserva</button>
+          <button type="button" class="btn secondary sm" id="btn-ticket-repartidor" title="Una imagen y un contacto con todos los pedidos de un repartidor" style="margin-left:auto;">🛵 Ticket por repartidor</button>
+          <button type="button" class="btn secondary sm" id="btn-mapa-pendientes" title="Ver juntos en Google Maps todos los envíos que todavía no salieron, sin importar el repartidor">🗺️ Ver todos en Maps</button>
+          <button type="button" class="btn secondary sm" id="btn-rutas" title="Agrupar los envíos pendientes por cercanía">🗺️ Optimizar rutas</button>
+        </div>
+        <div class="leyenda muted">
+          <span><i class="dot dot-ok"></i> Salió / Reservado</span>
+          <span><i class="dot dot-programado"></i> Esperando hora programada</span>
+          <span><i class="dot dot-danger"></i> Demorado</span>
+          <span><i class="dot dot-warn"></i> Sin facturar (tarde)</span>
+          <span><i class="dot dot-anulado"></i> Anulado</span>
+        </div>
+        <div class="tbl-wrap">
+          <table id="tabla">
+            <thead>
+              <tr>
+                <th>N°</th><th>Hora</th><th>Tipo</th><th>Cliente</th>
+                <th>Ítems</th><th class="right">Total</th><th>Pago</th>
+                <th>Repartidor</th><th>Estado</th><th>Notas</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="tabla-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CARTA ============ -->
+    <section id="view-carta" class="view">
+      <div class="card">
+        <h2>Carta (catálogo)</h2>
+
+        <div class="panel" style="margin:.6rem 0;">
+          <div class="row" style="gap:1.4rem;">
+            <div class="field">
+              <label id="lbl-aumentar">Aumentar todos +$X (efectivo y lista)</label>
+              <div class="row">
+                <input type="number" id="aumento-monto" placeholder="$ aumento" step="100" style="width:120px;" />
+                <button class="btn secondary" id="btn-aumentar">Aumentar</button>
+              </div>
+            </div>
+            <div class="field">
+              <label id="lbl-set-efectivo">Fijar TODOS los precios en efectivo a $</label>
+              <div class="row">
+                <input type="number" id="set-efectivo" placeholder="$ efectivo" step="100" style="width:120px;" />
+                <button class="btn secondary" id="btn-set-efectivo">Aplicar</button>
+              </div>
+            </div>
+            <div class="field">
+              <label id="lbl-set-lista">Fijar TODOS los precios de lista a $</label>
+              <div class="row">
+                <input type="number" id="set-lista" placeholder="$ lista" step="100" style="width:120px;" />
+                <button class="btn secondary" id="btn-set-lista">Aplicar</button>
+              </div>
+            </div>
+          </div>
+          <div class="carta-sel-banner" id="carta-sel-banner" style="display:none;">
+            <span id="carta-sel-texto"></span>
+            <button type="button" class="btn ghost sm" id="carta-sel-limpiar">Limpiar selección</button>
+          </div>
+          <p class="muted" style="font-size:.82rem;margin:.6rem 0 0;">"Aumentar" suma el mismo monto a ambos precios. "Fijar" pone el mismo precio (efectivo y lista por separado). Tildá platos en la tabla para aplicar el cambio sólo a esos; sin nada tildado se aplica a todos (sin el "Plato del día"). Nunca afecta a los pedidos ya cargados.</p>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th class="carta-sel-col"><input type="checkbox" id="carta-sel-todos" title="Elegir todos" /></th><th>Nombre</th><th>Categoría</th><th class="right">Precio efectivo</th><th class="right">Precio lista</th><th>Activo</th><th></th></tr></thead>
+            <tbody id="carta-body"></tbody>
+          </table>
+        </div>
+        <div class="row" style="margin-top:.8rem;">
+          <button class="btn" id="btn-nuevo-plato">+ Nuevo plato</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CLIENTES ============ -->
+    <section id="view-clientes" class="view">
+      <div class="card">
+        <div class="row between clientes-heading">
+          <div>
+            <h2>Clientes</h2>
+            <p class="muted" id="clientes-count" aria-live="polite"></p>
+          </div>
+          <div class="field clientes-search">
+            <label for="clientes-buscar">Buscar por nombre, dirección o teléfono</label>
+            <input id="clientes-buscar" type="search" placeholder="Buscar cliente…" autocomplete="off" />
+          </div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Nombre</th><th>Dirección</th><th>Teléfono</th><th>Indicaciones</th><th>Descuento</th><th>Acciones</th></tr></thead>
+            <tbody id="clientes-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CUENTAS ============ -->
+    <section id="view-cuentas" class="view">
+      <div class="card">
+        <div class="row between">
+          <div><h2>Cuentas de clientes</h2><p class="muted" style="margin:0;">Platos pagados en Bistro y pedidos para facturar por semana.</p></div>
+          <button type="button" class="btn secondary" id="cuenta-nueva-toggle">+ Abrir cuenta</button>
+        </div>
+        <form id="cuenta-nueva" class="panel hidden" style="margin-top:1rem;">
+          <div class="row">
+            <div class="field grow"><label for="cuenta-cliente">Cliente de la agenda</label><select id="cuenta-cliente" required></select></div>
+            <div class="field"><label for="cuenta-tipo">Modalidad</label><select id="cuenta-tipo"><option value="platos">Platos prepagados</option><option value="semanal">Facturación semanal</option></select></div>
+            <button type="submit" class="btn">Crear cuenta</button>
+          </div>
+        </form>
+        <div id="cuentas-list" class="cuentas-list"></div>
+      </div>
+      <div id="cuenta-detalle" class="card hidden" aria-live="polite"></div>
+    </section>
+
+
+    <!-- ============ CIERRE JUDICIALES ============ -->
+    <section id="view-judiciales" class="view">
+      <div class="card judiciales-card judiciales-unavailable" role="status">
+        <p>Servicio en construcción... Gracias por su paciencia</p>
+      </div>
+    </section>
+
+    <!-- ============ CONFIG ============ -->
+    <section id="view-config" class="view">
+      <div class="card" style="max-width:520px;">
+        <h2>Configuración</h2>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label>Nombre del local (aparece en el título y en los Excel)</label>
+          <input id="c-nombre-local" placeholder="Ej: Retiro" />
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label>Minutos de demora para alerta de salida</label>
+          <input type="number" id="c-demora" />
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label>Hora de alerta de pedidos sin facturar (HH:MM)</label>
+          <input id="c-sinfact" placeholder="14:00" />
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label>Hora límite de toma de pedidos (HH:MM)</label>
+          <input id="c-limite" placeholder="13:40" />
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label>Costo de envío por defecto</label>
+          <input type="number" id="c-envio" step="100" />
+        </div>
+        <div class="field" style="margin-bottom:.6rem;">
+          <label>Dirección del local (punto de partida de las rutas)</label>
+          <input id="c-direccion-local" placeholder="Ej: Suipacha 123, Buenos Aires" />
+        </div>
+        <div class="field" style="margin-bottom:1rem;">
+          <label>Ciudad/zona (se agrega a las direcciones en los links de Google Maps y al ubicarlas)</label>
+          <input id="c-ciudad-default" placeholder="Ej: Buenos Aires, Argentina" />
+          <small class="muted">Importante: sin esto, una calle a secas puede caer en otra localidad.</small>
+        </div>
+        <button class="btn" id="btn-guardar-config">Guardar configuración</button>
+        <span id="config-ok" class="muted" style="margin-left:.6rem;"></span>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal nombre del local (una sola vez por dispositivo) -->
+  <div class="modal-back" id="modal-local">
+    <div class="modal">
+      <h2>Nombre del local</h2>
+      <p class="muted" style="font-size:.85rem;">¿Cómo se llama este local? Aparece en el título de la app y en los nombres de los Excel exportados (por ejemplo "Retiro").</p>
+      <div class="field" style="margin-bottom:1rem;">
+        <label>Nombre</label>
+        <input id="input-nombre-local" placeholder="Ej: Retiro" autocomplete="off" />
+      </div>
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn" id="local-guardar">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal repartidores del día -->
+  <div class="modal-back" id="modal-rep">
+    <div class="modal">
+      <h2>Repartidores del día</h2>
+      <p class="muted" id="rep-modal-fecha" style="margin-top:0;"></p>
+      <p class="muted" style="font-size:.85rem;">Cargá 1 o 2 repartidores para este día. Después, en cada pedido, elegís cuál lo lleva (o lo dejás sin asignar y lo decidís más tarde).</p>
+      <datalist id="rep-historial"></datalist>
+      <div class="field" style="margin-bottom:.6rem;">
+        <label>Repartidor 1</label>
+        <input id="rep-1" list="rep-historial" placeholder="Nombre" autocomplete="off" />
+      </div>
+      <div class="field" style="margin-bottom:1rem;">
+        <label>Repartidor 2 (opcional)</label>
+        <input id="rep-2" list="rep-historial" placeholder="Nombre" autocomplete="off" />
+      </div>
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn ghost" id="rep-cancel">Cancelar</button>
+        <button class="btn" id="rep-save">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal plato del día -->
+  <div class="modal-back" id="modal-pdd">
+    <div class="modal">
+      <h2>Plato del día</h2>
+      <p class="muted" id="pdd-modal-fecha" style="margin-top:0;"></p>
+      <label style="display:block;margin-bottom:.8rem;font-weight:500;">
+        <input type="checkbox" id="pdd-hay" checked /> Hoy hay plato del día
+      </label>
+      <div id="pdd-campos">
+        <div id="pdd-items"></div>
+        <button type="button" class="btn ghost sm" id="pdd-agregar">+ Agregar otro plato</button>
+      </div>
+      <p class="muted" style="font-size:.82rem;margin-top:.6rem;">Después, en cada pedido, agregás el plato del día con el botón "+ Plato del día" (podés editar nombre y precio en el momento; si cargaste más de uno, elegís cuál).</p>
+      <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+        <button class="btn ghost" id="pdd-cancel">Cancelar</button>
+        <button class="btn" id="pdd-save">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Vista de todos los envíos pendientes y tramos compatibles con Maps -->
+  <div class="modal-back" id="modal-mapa-pendientes">
+    <div class="modal">
+      <h2>Envíos pendientes en Maps</h2>
+      <p class="muted" id="mapa-pendientes-info"></p>
+      <div id="mapa-pendientes-contenido"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+        <button type="button" class="btn" id="mapa-pendientes-cerrar">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal facturación fin del día -->
+  <div class="modal-back" id="modal-fact">
+    <div class="modal modal-wide">
+      <h2>Facturación del día</h2>
+      <p class="muted" id="fact-fecha" style="margin-top:0;"></p>
+      <p class="muted" style="font-size:.85rem;">Cantidad vendida de cada ítem (incluye envíos), separada por método de pago. Facturá juntos todos los pedidos de cada columna.</p>
+      <div id="fact-cols" class="fact-cols"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+        <button class="btn" id="fact-cerrar">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal ticket para el repartidor -->
+  <div class="modal-back" id="modal-ticket">
+    <div class="modal">
+      <h2 id="ticket-title">Ticket para el repartidor</h2>
+      <div class="ticket-canvas-wrap">
+        <canvas id="ticket-canvas"></canvas>
+      </div>
+      <div id="ticket-orden-wrap" style="display:none;margin-top:.9rem;">
+        <h3 style="margin:0 0 .15rem;font-size:.95rem;">Orden de entrega</h3>
+        <p class="muted" style="font-size:.8rem;margin:0 0 .5rem;">Acomodalas como las tiene que entregar: la imagen, los contactos y la ruta en Maps salen en este orden.</p>
+        <ol class="orden-lista" id="ticket-orden"></ol>
+      </div>
+      <div class="row" style="margin-top:.8rem;flex-wrap:wrap;">
+        <button class="btn" id="ticket-copiar">📋 Copiar imagen</button>
+        <button class="btn secondary" id="ticket-descargar">⬇ Descargar</button>
+        <button class="btn secondary" id="ticket-contacto">👤 Copiar contacto</button>
+        <a class="btn secondary" id="ticket-wa" target="_blank" rel="noopener">💬 WhatsApp cliente</a>
+        <a class="btn secondary" id="ticket-maps" target="_blank" rel="noopener">🗺️ Ver dirección en Maps</a>
+        <button class="btn secondary" id="ticket-ruta">🗺️ Ruta optimizada</button>
+      </div>
+      <p class="muted" id="ticket-maps-query" style="font-size:.78rem;margin:.55rem 0 0;"></p>
+      <p class="muted" id="ticket-hint" style="font-size:.82rem;margin:.6rem 0 0;">Copiá la imagen y pegala (Ctrl+V) en el chat de WhatsApp del repartidor. Con "Copiar contacto" le pegás también el teléfono del cliente.</p>
+      <div class="row" style="justify-content:flex-end;margin-top:.6rem;">
+        <button class="btn ghost" id="ticket-cerrar">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal rutas optimizadas -->
+  <div class="modal-back" id="modal-rutas">
+    <div class="modal modal-wide">
+      <h2>Rutas optimizadas</h2>
+      <p class="muted" id="rutas-fecha" style="margin-top:0;"></p>
+      <p class="muted" style="font-size:.85rem;">Agrupa los envíos pendientes de salir por cercanía entre los repartidores del día. Reacomodá las paradas con ↑/↓ (o arrastrándolas) si preferís otro orden, abrí el mapa y confirmá la asignación.</p>
+      <div id="rutas-contenido"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+        <button class="btn ghost" id="rutas-cerrar">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal elegir repartidor para el ticket combinado -->
+  <div class="modal-back" id="modal-ticket-rep">
+    <div class="modal">
+      <h2>Ticket por repartidor</h2>
+      <p class="muted" style="font-size:.85rem;">Elegí un repartidor para armar una sola imagen y un solo contacto con todos sus envíos pendientes de hoy.</p>
+      <div id="ticket-rep-list"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+        <button class="btn ghost" id="ticket-rep-cancel">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edición de cliente -->
+  <div class="modal-back" id="modal-cliente">
+    <div class="modal">
+      <h2>Editar cliente</h2>
+      <form id="cliente-form">
+        <div class="field"><label for="mc-nombre">Nombre</label><input id="mc-nombre" required /></div>
+        <div class="field"><label for="mc-direccion">Dirección</label><input id="mc-direccion" /></div>
+        <div class="field"><label for="mc-telefono">Teléfono</label><input id="mc-telefono" type="tel" /></div>
+        <div class="field"><label for="mc-indicaciones">Indicaciones</label><textarea id="mc-indicaciones" rows="2"></textarea></div>
+        <div class="row">
+          <div class="field"><label for="mc-desc-tipo">Descuento</label><select id="mc-desc-tipo"><option value="">Sin descuento</option><option value="monto">Monto $</option><option value="porcentaje">Porcentaje %</option></select></div>
+          <div class="field"><label for="mc-desc-valor">Valor</label><input id="mc-desc-valor" type="number" min="0" step="any" value="0" /></div>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+          <button type="button" class="btn ghost" id="mc-cancel">Cancelar</button>
+          <button type="submit" class="btn" id="mc-save">Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal genérico plato -->
+  <div class="modal-back" id="modal-plato">
+    <div class="modal">
+      <h2 id="modal-plato-title">Plato</h2>
+      <input type="hidden" id="mp-id" />
+      <div class="row">
+        <div class="field grow"><label>Nombre</label><input id="mp-nombre" /></div>
+        <div class="field"><label>Categoría</label><input id="mp-categoria" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Precio efectivo</label><input type="number" id="mp-ef" step="100" /></div>
+        <div class="field"><label>Precio lista</label><input type="number" id="mp-li" step="100" /></div>
+        <div class="field"><label>&nbsp;</label><label style="font-weight:500;"><input type="checkbox" id="mp-activo" checked /> Activo</label></div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+        <button class="btn ghost" id="mp-cancel">Cancelar</button>
+        <button class="btn" id="mp-save">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

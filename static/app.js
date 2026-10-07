@@ -1,0 +1,2894 @@
+"use strict";
+
+// ------------------------------------------------------------------ helpers
+const $ = (id) => document.getElementById(id);
+const money = (n) => "$" + (Math.round(n || 0)).toLocaleString("es-AR");
+
+// Calcula el vuelto a partir del texto libre de "paga con" (ej. "40000", "Justo").
+// Devuelve null si el texto no permite calcular nada (vacío o sin dígitos ni "justo").
+function calcularVuelto(detalle, total) {
+  if (!detalle) return null;
+  const t = detalle.trim().toLowerCase();
+  if (t === "justo" || t === "exacto") return 0;
+  const digits = detalle.replace(/\D/g, "");
+  if (!digits) return null;
+  return parseInt(digits, 10) - total;
+}
+
+// Texto " → Vuelto $X" para mostrar junto al detalle de pago en efectivo.
+function vueltoSufijo(p) {
+  const vuelto = calcularVuelto(p.pago_efectivo_detalle, p.total);
+  if (vuelto === null || vuelto <= 0) return "";
+  return ` → Vuelto ${money(vuelto)}`;
+}
+const todayISO = () => new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD local
+
+// Aviso no bloqueante abajo a la derecha. tipo: "ok" | "error" | "info".
+function toast(msg, tipo = "info") {
+  const t = document.createElement("div");
+  t.className = "toast " + tipo;
+  t.textContent = msg;
+  $("toasts").appendChild(t);
+  setTimeout(() => {
+    t.classList.add("out");
+    t.addEventListener("transitionend", () => t.remove(), { once: true });
+    setTimeout(() => t.remove(), 600); // por si reduced-motion saltea la transición
+  }, tipo === "error" ? 6000 : 3500);
+}
+
+async function api(url, opts) {
+  const r = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// -------------------------------------------------------------------- state
+const state = {
+  fecha: todayISO(),
+  platos: [],
+  items: [],          // {plato_id, nombre, precio_unitario, cantidad, es_pdd}
+  editId: null,
+  filtro: "todos",
+  pedidos: [],
+  repartidoresDia: [],
+  platoDia: { definido: false, hay: false, items: [] },
+};
+
+// Precio "de los demás platos" para usar como default del plato del día:
+// el precio más frecuente del catálogo (así una bebida suelta no lo desvía).
+function precioDefaultPlatos() {
+  const platos = platosNormales();
+  return { ef: _moda(platos.map((p) => p.precio_efectivo)), li: _moda(platos.map((p) => p.precio_lista)) };
+}
+function _moda(nums) {
+  const cont = {};
+  let mejor = 0, mejorN = -1;
+  for (const n of nums) {
+    if (!n) continue;
+    cont[n] = (cont[n] || 0) + 1;
+    if (cont[n] > mejorN) { mejorN = cont[n]; mejor = n; }
+  }
+  return mejor;
+}
+
+// --------------------------------------------------------------------- tabs
+document.querySelectorAll(".tabs button").forEach((b) =>
+  b.addEventListener("click", () => switchTab(b.dataset.tab))
+);
+function switchTab(tab) {
+  document.querySelectorAll(".tabs button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.tab === tab)
+  );
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  $("view-" + tab).classList.add("active");
+  if (tab === "carta") loadCarta();
+  if (tab === "clientes") loadClientes();
+  if (tab === "cuentas") return loadCuentas();
+  if (tab === "config") loadConfig();
+}
+
+// ---------------------------------------------------------- agenda clientes
+let agendaClientes = [];
+let clienteEditId = null;
+
+async function loadClientes() {
+  try {
+    agendaClientes = await api("/api/clientes/agenda");
+    renderClientes();
+  } catch (err) {
+    toast("No se pudo cargar la agenda: " + err.message, "error");
+  }
+}
+
+function renderClientes() {
+  const termino = $("clientes-buscar").value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const visibles = agendaClientes.filter((c) =>
+    [c.nombre, c.direccion, c.telefono].some((v) =>
+      (v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(termino)
+    )
+  );
+  $("clientes-count").textContent = termino
+    ? `${visibles.length} de ${agendaClientes.length} clientes`
+    : `${agendaClientes.length} ${agendaClientes.length === 1 ? "cliente guardado" : "clientes guardados"}`;
+  $("clientes-body").innerHTML = visibles.length ? visibles.map((c) => `
+    <tr data-id="${c.id}">
+      <td><strong>${escapeHtml(c.nombre)}</strong></td>
+      <td>${escapeHtml(c.direccion) || "—"}</td>
+      <td>${escapeHtml(c.telefono) || "—"}</td>
+      <td>${escapeHtml(c.indicaciones) || "—"}</td>
+      <td>${c.descuento_tipo ? `${c.descuento_tipo === "porcentaje" ? `${c.descuento_valor}%` : money(c.descuento_valor)}` : "—"}</td>
+      <td class="clientes-actions"><button type="button" class="btn secondary sm" data-action="account">Cuenta</button> <button type="button" class="btn secondary sm" data-action="edit">Editar</button> <button type="button" class="btn ghost sm" data-action="delete">Borrar</button></td>
+    </tr>`).join("") : `<tr><td colspan="6" class="muted">${termino ? "No hay clientes que coincidan." : "Todavía no hay clientes guardados."}</td></tr>`;
+}
+
+$("clientes-buscar").addEventListener("input", renderClientes);
+$("clientes-body").addEventListener("click", async (e) => {
+  const boton = e.target.closest("button[data-action]");
+  if (!boton) return;
+  const c = agendaClientes.find((item) => item.id === Number(boton.closest("tr").dataset.id));
+  if (!c) return;
+  if (boton.dataset.action === "account") {
+    await switchTab("cuentas");
+    const cuenta = cuentasClientes.find((item) => item.cliente_id === c.id);
+    if (cuenta) seleccionarCuenta(cuenta.id);
+    else {
+      $("cuenta-nueva").classList.remove("hidden");
+      $("cuenta-cliente").value = c.id;
+    }
+    return;
+  }
+  if (boton.dataset.action === "edit") {
+    clienteEditId = c.id;
+    $("mc-nombre").value = c.nombre;
+    $("mc-direccion").value = c.direccion || "";
+    $("mc-telefono").value = c.telefono || "";
+    $("mc-indicaciones").value = c.indicaciones || "";
+    $("mc-desc-tipo").value = c.descuento_tipo || "";
+    $("mc-desc-valor").value = c.descuento_valor || 0;
+    $("modal-cliente").classList.add("show");
+    $("mc-nombre").focus();
+    return;
+  }
+  if (!confirm(`¿Borrar a ${c.nombre} de la agenda? Los pedidos anteriores se conservan.`)) return;
+  boton.disabled = true;
+  try {
+    await api(`/api/clientes/${c.id}`, { method: "DELETE" });
+    await loadClientes();
+    toast("Cliente borrado de la agenda", "ok");
+  } catch (err) {
+    boton.disabled = false;
+    toast("No se pudo borrar: " + err.message, "error");
+  }
+});
+
+$("mc-cancel").addEventListener("click", () => {
+  $("modal-cliente").classList.remove("show");
+  clienteEditId = null;
+});
+$("cliente-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (clienteEditId === null) return;
+  const boton = $("mc-save");
+  boton.disabled = true;
+  try {
+    await api(`/api/clientes/${clienteEditId}`, { method: "PUT", body: JSON.stringify({
+      nombre: $("mc-nombre").value.trim(),
+      direccion: $("mc-direccion").value.trim(),
+      telefono: $("mc-telefono").value.trim(),
+      indicaciones: $("mc-indicaciones").value.trim(),
+      descuento_tipo: $("mc-desc-tipo").value || null,
+      descuento_valor: +$("mc-desc-valor").value || 0,
+    }) });
+    $("mc-cancel").click();
+    await loadClientes();
+    toast("Cliente actualizado", "ok");
+  } catch (err) {
+    toast("No se pudo guardar: " + err.message, "error");
+  } finally {
+    boton.disabled = false;
+  }
+});
+
+// ------------------------------------------------------- cuentas de clientes
+let cuentasClientes = [];
+let cuentaActual = null;
+
+async function loadCuentas() {
+  try {
+    const [cuentas, clientes, platos] = await Promise.all([api("/api/cuentas"), api("/api/clientes/agenda"), api("/api/platos")]);
+    cuentasClientes = cuentas;
+    state.platos = platos;
+    $("cuenta-cliente").innerHTML = `<option value="">Elegí un cliente</option>` + clientes
+      .filter((c) => !cuentas.some((cu) => cu.cliente_id === c.id))
+      .map((c) => `<option value="${c.id}">${escapeHtml(c.nombre)} — ${escapeHtml(c.direccion)}</option>`).join("");
+    $("cuentas-list").innerHTML = cuentas.length ? cuentas.map((c) => `
+      <button type="button" class="cuenta-card ${cuentaActual?.id === c.id ? "active" : ""}" data-id="${c.id}">
+        <span class="cuenta-card-name">${escapeHtml(c.nombre)}</span>
+        <small>${c.tipo === "platos" ? "Platos prepagados" : "Facturación semanal"}</small>
+        <strong>${c.tipo === "platos" ? `${c.valor} ${c.valor === 1 ? "plato disponible" : "platos disponibles"}` : `${money(c.valor)} por saldar`}</strong>
+      </button>`).join("") : `<p class="muted">Todavía no hay cuentas. Abrí una para un cliente de la agenda.</p>`;
+    if (cuentaActual) await seleccionarCuenta(cuentaActual.id);
+  } catch (err) { toast("No se pudieron cargar las cuentas: " + err.message, "error"); }
+}
+
+$("cuenta-nueva-toggle").addEventListener("click", () => $("cuenta-nueva").classList.toggle("hidden"));
+$("cuenta-nueva").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const boton = e.target.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    const result = await api("/api/cuentas", { method: "POST", body: JSON.stringify({
+      cliente_id: +$("cuenta-cliente").value, tipo: $("cuenta-tipo").value,
+    }) });
+    $("cuenta-nueva").classList.add("hidden");
+    cuentaActual = null;
+    await loadCuentas();
+    await seleccionarCuenta(result.id);
+    toast("Cuenta creada", "ok");
+  } catch (err) { toast("No se pudo crear la cuenta: " + err.message, "error"); }
+  finally { boton.disabled = false; }
+});
+$("cuentas-list").addEventListener("click", (e) => {
+  const card = e.target.closest("button[data-id]");
+  if (card) seleccionarCuenta(+card.dataset.id);
+});
+
+async function seleccionarCuenta(id) {
+  try {
+    cuentaActual = await api(`/api/cuentas/${id}`);
+    $("cuenta-detalle").classList.remove("hidden");
+    document.querySelectorAll(".cuenta-card").forEach((card) => card.classList.toggle("active", +card.dataset.id === id));
+    renderCuentaDetalle();
+  } catch (err) { toast("No se pudo abrir la cuenta: " + err.message, "error"); }
+}
+
+function renderCuentaDetalle() {
+  const c = cuentaActual;
+  if (!c) return;
+  const titulo = `<h2>${escapeHtml(c.nombre)}</h2>`;
+  if (c.tipo === "platos") {
+    $("cuenta-detalle").innerHTML = `${titulo}
+      <div class="cuenta-saldo"><strong>${c.saldo}</strong><span>${c.saldo === 1 ? "plato disponible" : "platos disponibles"}</span></div>
+      <p class="muted">El pago se registra en Bistro. Cada retiro descuenta platos acá, sin generar otro cobro.</p>
+      <form id="cuenta-mov-form" class="panel">
+        <div class="row">
+          <div class="field"><label for="cm-tipo">Movimiento</label><select id="cm-tipo"><option value="retiro">Retiró platos</option><option value="carga">Pagó platos en Bistro</option></select></div>
+          <div class="field"><label for="cm-cantidad">Cantidad</label><input id="cm-cantidad" type="number" min="1" step="1" value="1" required /></div>
+          <div class="field"><label for="cm-fecha">Fecha</label><input id="cm-fecha" type="date" value="${todayISO()}" required /></div>
+          <div class="field grow" id="cm-plato-wrap"><label for="cm-plato">Qué plato llevó</label><input id="cm-plato" list="cuenta-platos" placeholder="Plato elegido" required /></div>
+          <datalist id="cuenta-platos">${state.platos.filter((p) => p.activo).map((p) => `<option value="${escapeAttr(p.nombre)}"></option>`).join("")}</datalist>
+        </div>
+        <div class="row" style="margin-top:.6rem;"><div class="field grow"><label for="cm-nota">Nota (opcional)</label><input id="cm-nota" placeholder="Ej.: pago anotado en Bistro, agregado cobrado aparte…" /></div>
+          <button type="submit" class="btn">Registrar</button></div>
+      </form>
+      <h3 style="margin-top:1.2rem;">Historial</h3>
+      <div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Movimiento</th><th>Plato / nota</th><th></th></tr></thead><tbody>
+        ${c.movimientos.length ? c.movimientos.map((m) => `<tr><td>${m.fecha}</td><td>${m.tipo === "carga" ? `+${m.cantidad} pagados` : `−${m.cantidad} retirados`}</td><td>${escapeHtml(m.plato) || "—"}${m.nota ? `<br><small class="muted">${escapeHtml(m.nota)}</small>` : ""}</td><td><button type="button" class="btn ghost sm" data-mov-delete="${m.id}" aria-label="Borrar movimiento">Borrar</button></td></tr>`).join("") : `<tr><td colspan="4" class="muted">Todavía no hay movimientos.</td></tr>`}
+      </tbody></table></div>`;
+    return;
+  }
+  const pendientes = c.pedidos.filter((p) => p.cierre_id === null);
+  $("cuenta-detalle").innerHTML = `${titulo}
+    <div class="cuenta-saldo"><strong>${money(c.saldo)}</strong><span>saldo por saldar</span></div>
+    <p class="muted">Sin facturar: ${money(c.pendiente)} · Facturado sin cobrar: ${money(c.por_cobrar)}</p>
+    <p class="muted">Registrá acá cada pedido de la empresa. Estos importes no entran en la caja diaria. Si necesita ticket o ruta, cargalo también en Pedidos.</p>
+    <form id="cuenta-pedido-form" class="panel">
+      <div class="row"><div class="field"><label for="cp-fecha">Fecha del pedido</label><input type="date" id="cp-fecha" value="${todayISO()}" required /></div>
+        <div class="field grow"><label for="cp-nota">Nota (opcional)</label><input id="cp-nota" placeholder="Entrega, contacto…" /></div></div>
+      <div id="cp-items"></div>
+      <div class="row" style="margin-top:.7rem;"><button type="button" class="btn secondary sm" id="cp-add">+ Plato</button><button type="submit" class="btn">Agregar pedido a la cuenta</button></div>
+    </form>
+    <div class="row between" style="margin:1.1rem 0 .5rem;"><h3>Pedidos pendientes</h3><div class="row"><div class="field"><label for="cc-hasta">Incluir hasta</label><input id="cc-hasta" type="date" value="${todayISO()}" /></div><button type="button" class="btn secondary sm" id="cc-cerrar" ${pendientes.length ? "" : "disabled"}>Marcar facturado</button></div></div>
+    ${renderPedidosCuenta(pendientes, true)}
+    <div class="row between" style="margin-top:1.3rem;"><h3>Cierres anteriores</h3>${c.por_cobrar ? `<button type="button" class="btn secondary sm" id="cc-cobrar-todos">Marcar todos los cierres cobrados</button>` : ""}</div>
+    ${c.cierres.length ? c.cierres.map((cc) => `<details class="cuenta-cierre"><summary>${cc.fecha} · ${money(cc.total)} · ${cc.pagado ? "Pagado" : "Pendiente de cobro"}</summary>
+      <div class="row" style="margin:.65rem 0;"><button type="button" class="btn ghost sm" data-copiar="${cc.id}">Copiar resumen</button>${cc.pagado ? "" : `<button type="button" class="btn secondary sm" data-pagar="${cc.id}">Marcar cobrado</button>`}</div>
+      ${renderPedidosCuenta(c.pedidos.filter((p) => p.cierre_id === cc.id), false)}</details>`).join("") : `<p class="muted">Aún no hay cierres.</p>`}`;
+  agregarLineaCuenta();
+}
+
+function renderPedidosCuenta(pedidos, editable) {
+  return pedidos.length ? `<div class="tbl-wrap"><table><thead><tr><th>Fecha</th><th>Platos y agregados</th><th>Total</th><th></th></tr></thead><tbody>${pedidos.map((p) => `
+    <tr><td>${p.fecha}</td><td>${p.items.map((i) => `${i.cantidad} × ${escapeHtml(i.plato)}${i.extra ? ` + ${escapeHtml(i.extra)}` : ""}`).join("<br>")}${p.nota ? `<br><small class="muted">${escapeHtml(p.nota)}</small>` : ""}</td><td>${money(p.total)}</td><td>${editable ? `<button type="button" class="btn ghost sm" data-pedido-delete="${p.id}">Borrar</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">No hay pedidos pendientes.</p>`;
+}
+
+function agregarLineaCuenta() {
+  $("cp-items").insertAdjacentHTML("beforeend", `<div class="cuenta-linea row">
+    <div class="field grow"><label>Plato</label><input class="cp-plato" list="cuenta-platos" required placeholder="Nombre del plato" /></div>
+    <div class="field"><label>Cantidad</label><input class="cp-cantidad" type="number" min="1" step="1" value="1" required /></div>
+    <div class="field"><label>Precio lista c/u (editable)</label><input class="cp-precio" type="number" min="0" step="any" required placeholder="$" /></div>
+    <div class="field grow"><label>Agregado</label><input class="cp-extra" placeholder="Opcional" /></div>
+    <div class="field"><label>$ extra c/u</label><input class="cp-extra-precio" type="number" min="0" step="any" value="0" required /></div>
+    <button type="button" class="btn ghost sm cp-remove" title="Quitar plato">✕</button></div>`);
+  if (!$('cuenta-platos')) $("cp-items").insertAdjacentHTML("beforeend", `<datalist id="cuenta-platos">${state.platos.filter((p) => p.activo).map((p) => `<option value="${escapeAttr(p.nombre)}"></option>`).join("")}</datalist>`);
+}
+
+$("cuenta-detalle").addEventListener("change", (e) => {
+  if (e.target.id !== "cm-tipo") return;
+  const retiro = e.target.value === "retiro";
+  $("cm-plato-wrap").classList.toggle("hidden", !retiro);
+  $("cm-plato").required = retiro;
+});
+$("cuenta-detalle").addEventListener("input", (e) => {
+  if (!e.target.classList.contains("cp-plato")) return;
+  const input = e.target;
+  const linea = input.closest(".cuenta-linea");
+  const precio = linea.querySelector(".cp-precio");
+  const nombre = input.value.trim().toLocaleLowerCase("es-AR");
+  if (nombre === input.dataset.platoAsignado) return; // un precio editado a mano se conserva
+  const plato = state.platos.find((p) => p.activo && p.nombre.trim().toLocaleLowerCase("es-AR") === nombre);
+  if (plato) {
+    precio.value = plato.precio_lista; // facturación diferida: precio de lista
+    input.dataset.platoAsignado = nombre;
+  } else {
+    if (input.dataset.platoAsignado) precio.value = "";
+    input.dataset.platoAsignado = "";
+  }
+});
+$("cuenta-detalle").addEventListener("click", async (e) => {
+  const el = e.target.closest("button");
+  if (!el || !cuentaActual) return;
+  if (el.id === "cp-add") { agregarLineaCuenta(); return; }
+  if (el.classList.contains("cp-remove")) {
+    if (document.querySelectorAll(".cuenta-linea").length > 1) el.closest(".cuenta-linea").remove();
+    return;
+  }
+  const id = cuentaActual.id;
+  try {
+    if (el.dataset.movDelete) {
+      if (!confirm("¿Borrar este movimiento de platos? Se recalculará el saldo.")) return;
+      await api(`/api/cuentas/${id}/movimientos/${el.dataset.movDelete}`, { method: "DELETE" });
+    } else if (el.dataset.pedidoDelete) {
+      if (!confirm("¿Borrar este pedido pendiente de la cuenta?")) return;
+      await api(`/api/cuentas/${id}/pedidos/${el.dataset.pedidoDelete}`, { method: "DELETE" });
+    } else if (el.id === "cc-cerrar") {
+      const hasta = $("cc-hasta").value;
+      if (!confirm(`¿Marcar facturados todos los pedidos pendientes hasta ${hasta}? Confirmá después de registrarlos en Bistro.`)) return;
+      await api(`/api/cuentas/${id}/cierres`, { method: "POST", body: JSON.stringify({ hasta }) });
+    } else if (el.dataset.pagar) {
+      if (!confirm("¿Confirmás que recibiste el pago de este cierre?")) return;
+      await api(`/api/cuentas/${id}/cierres/${el.dataset.pagar}/pagado`, { method: "POST" });
+    } else if (el.id === "cc-cobrar-todos") {
+      if (!confirm(`¿Confirmás que cobraste todos los cierres pendientes (${money(cuentaActual.por_cobrar)})? Los pedidos aún sin facturar seguirán pendientes.`)) return;
+      await api(`/api/cuentas/${id}/cierres/cobrar-todos`, { method: "POST" });
+    } else if (el.dataset.copiar) {
+      const cierre = cuentaActual.cierres.find((c) => c.id === +el.dataset.copiar);
+      const pedidos = cuentaActual.pedidos.filter((p) => p.cierre_id === cierre.id);
+      const texto = [`${cuentaActual.nombre} — cierre ${cierre.fecha}`, ...pedidos.flatMap((p) => [p.fecha, ...p.items.map((i) => `  ${i.cantidad} × ${i.plato}${i.extra ? ` + ${i.extra}` : ""}: ${money(i.cantidad * (i.precio_unitario + i.precio_extra))}`), `  Subtotal: ${money(p.total)}`]), `TOTAL: ${money(cierre.total)}`].join("\n");
+      await navigator.clipboard.writeText(texto);
+      toast("Resumen copiado", "ok");
+      return;
+    } else return;
+    await loadCuentas();
+    toast("Cuenta actualizada", "ok");
+  } catch (err) { toast("No se pudo actualizar la cuenta: " + err.message, "error"); }
+});
+$("cuenta-detalle").addEventListener("submit", async (e) => {
+  if (!cuentaActual) return;
+  e.preventDefault();
+  const boton = e.target.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    if (e.target.id === "cuenta-mov-form") {
+      await api(`/api/cuentas/${cuentaActual.id}/movimientos`, { method: "POST", body: JSON.stringify({
+        tipo: $("cm-tipo").value, cantidad: +$("cm-cantidad").value, fecha: $("cm-fecha").value,
+        plato: $("cm-tipo").value === "retiro" ? $("cm-plato").value.trim() : "",
+        nota: $("cm-nota").value.trim(),
+      }) });
+    } else {
+      const items = [...document.querySelectorAll(".cuenta-linea")].map((linea) => ({
+        plato: linea.querySelector(".cp-plato").value.trim(),
+        cantidad: +linea.querySelector(".cp-cantidad").value,
+        precio_unitario: +linea.querySelector(".cp-precio").value,
+        extra: linea.querySelector(".cp-extra").value.trim(),
+        precio_extra: +linea.querySelector(".cp-extra-precio").value,
+      }));
+      await api(`/api/cuentas/${cuentaActual.id}/pedidos`, { method: "POST", body: JSON.stringify({
+        fecha: $("cp-fecha").value, nota: $("cp-nota").value, items,
+      }) });
+    }
+    await loadCuentas();
+    toast("Registrado en la cuenta", "ok");
+  } catch (err) { toast("No se pudo registrar: " + err.message, "error"); }
+  finally { boton.disabled = false; }
+});
+
+// ------------------------------------------------------------ catalog cache
+async function loadCatalog() {
+  state.platos = await api("/api/platos");
+}
+const platosNormales = () => state.platos.filter((p) => !p.es_plato_del_dia);
+const platoDelDia = () => state.platos.find((p) => p.es_plato_del_dia);
+
+// ------------------------------------------------------------- items editor
+function precioSegunMetodo(plato) {
+  return $("f-pago").value === "Efectivo" ? plato.precio_efectivo : plato.precio_lista;
+}
+
+// Plato del día cargado que coincida por nombre (ignorando mayúsculas y
+// espacios sobrantes), o null si no hay ninguno.
+function pddPorNombre(nombre) {
+  const buscado = (nombre || "").trim().toLowerCase();
+  if (!buscado || !state.platoDia.hay) return null;
+  return state.platoDia.items.find((x) => (x.nombre || "").trim().toLowerCase() === buscado) || null;
+}
+
+function addItem(pdd = false, pddIdx = 0) {
+  if (pdd) {
+    // Se precarga con el plato del día elegido para la fecha (nombre y
+    // precio según método), pero nombre y precio quedan editables. Si hay
+    // más de un plato del día cargado, cada uno tiene su propio botón
+    // ("+ Nombre") y pddIdx indica cuál se apretó.
+    const items = state.platoDia.hay ? state.platoDia.items : [];
+    const elegido = items[pddIdx] || null;
+    const ef = elegido ? elegido.precio_efectivo : 0;
+    const li = elegido ? elegido.precio_lista : 0;
+    state.items.push({
+      plato_id: null,
+      nombre: elegido ? elegido.nombre : "",
+      precio_efectivo: ef,   // se usan para reaplicar precio al cambiar método
+      precio_lista: li,
+      precio_unitario: $("f-pago").value === "Efectivo" ? ef : li,
+      cantidad: 1,
+      es_pdd: true,
+    });
+  } else {
+    const first = platosNormales()[0];
+    state.items.push({
+      plato_id: first ? first.id : null,
+      nombre: first ? first.nombre : "",
+      precio_unitario: first ? precioSegunMetodo(first) : 0,
+      cantidad: 1,
+      es_pdd: false,
+    });
+  }
+  renderItems();
+}
+
+function renderItems() {
+  const cont = $("items-list");
+  cont.innerHTML = "";
+  state.items.forEach((it, idx) => {
+    const line = document.createElement("div");
+    line.className = "item-line";
+
+    let selHtml;
+    if (it.es_pdd) {
+      selHtml = `<input data-idx="${idx}" class="it-nombre" placeholder="Plato del día (nombre)" value="${escapeAttr(it.nombre)}" />`;
+    } else {
+      const normales = platosNormales();
+      let opts = normales
+        .map((p) => `<option value="${p.id}" ${p.id === it.plato_id ? "selected" : ""}>${escapeHtml(p.nombre)}</option>`)
+        .join("");
+      // Si el plato del ítem ya no está activo (dado de baja), no aparece en el
+      // catálogo: agregamos una opción con su nombre guardado para no perder el
+      // dato al editar un pedido viejo.
+      if (it.plato_id != null && !normales.some((p) => p.id === it.plato_id)) {
+        opts = `<option value="${it.plato_id}" selected>${escapeHtml(it.nombre)} (baja)</option>` + opts;
+      }
+      selHtml = `<select data-idx="${idx}" class="it-plato">${opts}</select>`;
+    }
+
+    line.innerHTML = `
+      ${selHtml}
+      <input type="number" min="1" data-idx="${idx}" class="it-cant" value="${it.cantidad}" />
+      <input type="number" step="100" min="0" data-idx="${idx}" class="it-precio" value="${it.precio_unitario}" />
+      <span class="right nowrap it-total" data-idx="${idx}">${money(it.cantidad * it.precio_unitario)}</span>
+      <button type="button" class="btn ghost sm" data-idx="${idx}" title="Quitar">✕</button>`;
+    cont.appendChild(line);
+  });
+
+  cont.querySelectorAll(".it-plato").forEach((s) =>
+    s.addEventListener("change", (e) => {
+      const i = +e.target.dataset.idx;
+      const p = state.platos.find((x) => x.id === +e.target.value);
+      if (!p) return; // opción "(baja)": no está en el catálogo, no reasignar.
+      state.items[i].plato_id = p.id;
+      state.items[i].nombre = p.nombre;
+      state.items[i].precio_unitario = precioSegunMetodo(p);
+      renderItems(); recalc();
+    })
+  );
+  cont.querySelectorAll(".it-nombre").forEach((s) =>
+    s.addEventListener("input", (e) => { state.items[+e.target.dataset.idx].nombre = e.target.value; })
+  );
+  // Cantidad y precio se tipean: acá NO se puede llamar a renderItems(), que
+  // rearma la lista entera y destruye el input enfocado a mitad del tipeo. Se
+  // actualiza state, el total de esa línea y los totales del pedido, nada más.
+  // Por lo mismo tampoco se reescribe el value del input mientras se escribe
+  // (mover el value corre el cursor al final): lo que haya que normalizar se
+  // normaliza en "blur".
+  cont.querySelectorAll(".it-cant").forEach((s) => {
+    s.addEventListener("input", (e) => {
+      const i = +e.target.dataset.idx;
+      state.items[i].cantidad = Math.max(1, +e.target.value || 1);
+      actualizarTotalLinea(i); recalc();
+    });
+    s.addEventListener("blur", (e) => {
+      const i = +e.target.dataset.idx;
+      if (+e.target.value !== state.items[i].cantidad) e.target.value = state.items[i].cantidad;
+    });
+  });
+  cont.querySelectorAll(".it-precio").forEach((s) => {
+    s.addEventListener("input", (e) => {
+      const i = +e.target.dataset.idx;
+      state.items[i].precio_unitario = +e.target.value || 0;
+      actualizarTotalLinea(i); recalc();
+    });
+    s.addEventListener("blur", (e) => {
+      const i = +e.target.dataset.idx;
+      if (+e.target.value !== state.items[i].precio_unitario) e.target.value = state.items[i].precio_unitario;
+    });
+  });
+  cont.querySelectorAll("button[data-idx]").forEach((b) =>
+    b.addEventListener("click", (e) => { state.items.splice(+e.currentTarget.dataset.idx, 1); renderItems(); recalc(); })
+  );
+  recalc();
+}
+
+// Actualiza sólo el subtotal de una línea, sin rearmar la lista (ver los
+// handlers de cantidad/precio).
+function actualizarTotalLinea(idx) {
+  const it = state.items[idx];
+  const span = $("items-list").querySelector(`.it-total[data-idx="${idx}"]`);
+  if (it && span) span.textContent = money(it.cantidad * it.precio_unitario);
+}
+
+// Re-aplicar precio según método a los ítems de catálogo y al plato del día
+// (que trae sus dos precios); un plato del día manual sin precios no se toca.
+function reapplyPrices() {
+  const efectivo = $("f-pago").value === "Efectivo";
+  state.items.forEach((it) => {
+    if (!it.es_pdd && it.plato_id) {
+      const p = state.platos.find((x) => x.id === it.plato_id);
+      if (p) it.precio_unitario = precioSegunMetodo(p);
+    } else if (it.es_pdd && (it.precio_efectivo || it.precio_lista)) {
+      it.precio_unitario = efectivo ? it.precio_efectivo : it.precio_lista;
+    }
+  });
+  renderItems();
+}
+
+function subtotalItems() {
+  return state.items.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0);
+}
+function montoEnvio() {
+  if ($("f-tipo").value !== "Envío" || $("f-no-envio").checked) return 0;
+  return +$("f-envio").value || 0;
+}
+function montoDescuento(sub) {
+  // Mismos clamps que el backend (totales.py): sin negativos, porcentaje
+  // tope 100, y el descuento por monto nunca supera el subtotal.
+  const tipo = $("f-desc-tipo").value;
+  const val = Math.max(0, +$("f-desc-valor").value || 0);
+  if (!tipo || !val) return 0;
+  return tipo === "porcentaje" ? sub * Math.min(val, 100) / 100 : Math.min(val, sub);
+}
+let currentTotal = 0;
+function recalc() {
+  const sub = subtotalItems();
+  currentTotal = Math.max(0, sub + montoEnvio() - montoDescuento(sub));
+  $("f-total").textContent = money(currentTotal);
+  updateVueltoCalc();
+}
+
+function updateVueltoCalc() {
+  const hint = $("f-vuelto-calc");
+  if ($("f-pago").value !== "Efectivo") { hint.textContent = ""; return; }
+  const vuelto = calcularVuelto($("f-vuelto").value, currentTotal);
+  if (vuelto === null) { hint.textContent = ""; return; }
+  hint.textContent = vuelto < 0
+    ? `Falta ${money(-vuelto)}`
+    : vuelto === 0
+      ? "Sin vuelto (paga justo)"
+      : `Vuelto para el repartidor: ${money(vuelto)}`;
+  hint.style.color = vuelto < 0 ? "var(--danger)" : "";
+}
+
+// ------------------------------------------------------------- form wiring
+["f-tipo", "f-no-envio", "f-envio", "f-desc-tipo", "f-desc-valor"].forEach((id) =>
+  $(id).addEventListener("input", () => { toggleEnvio(); recalc(); })
+);
+$("f-vuelto").addEventListener("input", updateVueltoCalc);
+$("f-pago").addEventListener("change", () => { toggleVuelto(); reapplyPrices(); recalc(); });
+$("add-item").addEventListener("click", () => addItem(false));
+$("add-pdd").addEventListener("click", () => addItem(true));
+$("btn-cancelar").addEventListener("click", resetForm);
+
+function toggleEnvio() {
+  const esEnvio = $("f-tipo").value === "Envío";
+  $("row-envio").querySelector("#f-envio").disabled = !esEnvio;
+  $("f-hora-programada").disabled = !esEnvio;
+  $("wrap-hora-programada").style.display = esEnvio ? "" : "none";
+}
+function toggleVuelto() {
+  $("wrap-vuelto").style.display = $("f-pago").value === "Efectivo" ? "" : "none";
+  $("f-pago").className = "select-pago " + pagoClase($("f-pago").value);
+}
+$("f-tipo").addEventListener("change", () => { toggleEnvio(); checkHoraLimite(); });
+
+async function checkHoraLimite() {
+  const b = $("banner-hora");
+  b.classList.remove("show");
+  if ($("f-fecha").value !== todayISO()) return;
+  const cfg = await getConfigCached();
+  const [h, m] = (cfg.hora_limite_pedidos || "13:40").split(":").map(Number);
+  const now = new Date();
+  if (now.getHours() > h || (now.getHours() === h && now.getMinutes() > m)) {
+    b.textContent = `⚠ Estás cargando un pedido para hoy después de las ${cfg.hora_limite_pedidos} (hora límite de toma de pedidos).`;
+    b.classList.add("show");
+  }
+}
+
+let _cfgCache = null;
+async function getConfigCached() {
+  if (!_cfgCache) _cfgCache = await api("/api/config");
+  return _cfgCache;
+}
+
+// ---------------------------------------------------------- save pedido
+$("pedido-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = {
+    fecha: $("f-fecha").value || null,
+    tipo: $("f-tipo").value,
+    cliente_nombre: $("f-cliente").value.trim(),
+    cliente_direccion: $("f-direccion").value.trim(),
+    cliente_telefono: $("f-telefono").value.trim(),
+    indicaciones: $("f-indicaciones").value.trim(),
+    items: state.items.map((i) => ({
+      plato_id: i.es_pdd ? null : i.plato_id,
+      nombre: i.nombre,
+      cantidad: i.cantidad,
+      precio_unitario: i.precio_unitario,
+    })),
+    costo_envio: +$("f-envio").value || 0,
+    no_cobrar_envio: $("f-no-envio").checked,
+    descuento_tipo: $("f-desc-tipo").value || null,
+    descuento_valor: +$("f-desc-valor").value || 0,
+    metodo_pago: $("f-pago").value,
+    pago_efectivo_detalle: $("f-pago").value === "Efectivo" ? $("f-vuelto").value.trim() : "",
+    hora_salida_programada: $("f-tipo").value === "Envío" && $("f-hora-programada").value
+      ? `${$("f-fecha").value || state.fecha}T${$("f-hora-programada").value}:00`
+      : null,
+    repartidor: $("f-repartidor").value.trim(),
+    notas: $("f-notas").value.trim(),
+  };
+  // Confirmar si faltan datos críticos (el medio de pago siempre trae un valor
+  // en el select, así que no se chequea). Las reservas se retiran por el
+  // local, por eso la dirección solo es crítica en Envío.
+  const faltan = [];
+  if (!body.cliente_nombre) faltan.push("nombre");
+  if (body.tipo === "Envío" && !body.cliente_direccion) faltan.push("dirección");
+  if (!body.items.length) faltan.push("ítems");
+  if (faltan.length && !confirm(`Faltan: ${faltan.join(", ")}. ¿Guardar el pedido igual?`)) return;
+  try {
+    const editando = !!state.editId;
+    let guardado;
+    if (editando) {
+      guardado = await api(`/api/pedidos/${state.editId}`, { method: "PATCH", body: JSON.stringify(body) });
+    } else {
+      guardado = await api("/api/pedidos", { method: "POST", body: JSON.stringify(body) });
+    }
+    // Guardar/actualizar cliente para autocompletado futuro.
+    if (body.cliente_nombre) saveClienteQuiet(body);
+    resetForm();
+    await loadDay();
+    toast(editando ? `Cambios guardados en el pedido N° ${guardado.numero ?? "—"}` : `Pedido N° ${guardado.numero ?? "—"} guardado`, "ok");
+  } catch (err) {
+    toast("Error al guardar: " + err.message, "error");
+  }
+});
+
+async function saveClienteQuiet(body) {
+  try {
+    const existentes = await api("/api/clientes?q=" + encodeURIComponent(body.cliente_nombre));
+    const dup = existentes.find((c) => c.nombre === body.cliente_nombre && c.direccion === body.cliente_direccion);
+    if (!dup) {
+      await api("/api/clientes", {
+        method: "POST",
+        body: JSON.stringify({
+          nombre: body.cliente_nombre, direccion: body.cliente_direccion,
+          telefono: body.cliente_telefono || "",
+          indicaciones: body.indicaciones,
+          descuento_tipo: body.descuento_tipo, descuento_valor: body.descuento_valor,
+        }),
+      });
+    } else if (body.cliente_telefono && !dup.telefono) {
+      // Cliente ya guardado sin teléfono: completarlo para la próxima.
+      await api(`/api/clientes/${dup.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ ...dup, telefono: body.cliente_telefono }),
+      });
+    }
+  } catch (e) { /* no bloquear la carga por esto */ }
+}
+
+function resetForm() {
+  state.items = []; state.editId = null;
+  $("pedido-form").reset();
+  $("f-fecha").value = state.fecha;
+  $("f-envio").value = _cfgCache ? _cfgCache.costo_envio_default : 3000;
+  $("form-title").textContent = "📝 Nuevo pedido";
+  $("btn-guardar").textContent = "Guardar pedido";
+  fillRepartidorSelect($("f-repartidor"), repartidorDefault());
+  renderItems(); toggleEnvio(); toggleVuelto(); checkHoraLimite();
+}
+
+// Si hay un único repartidor cargado para el día, se propone por defecto en
+// pedidos nuevos (no pisa una edición en curso ni una elección ya hecha).
+function repartidorDefault() {
+  return state.repartidoresDia.length === 1 ? state.repartidoresDia[0] : "";
+}
+
+// ------------------------------------------------------- cliente autocomplete
+setupAutocomplete("f-cliente", "ac-cliente", async (q) => {
+  if (!q) return [];
+  const cs = await api("/api/clientes?q=" + encodeURIComponent(q));
+  return cs.map((c) => ({
+    label: `${c.nombre} — ${c.direccion || "sin dirección"}`,
+    onPick: () => {
+      $("f-cliente").value = c.nombre;
+      $("f-direccion").value = c.direccion || "";
+      $("f-telefono").value = c.telefono || "";
+      $("f-indicaciones").value = c.indicaciones || "";
+      if (c.descuento_tipo) {
+        $("f-desc-tipo").value = c.descuento_tipo;
+        $("f-desc-valor").value = c.descuento_valor;
+      }
+      recalc();
+    },
+  }));
+});
+
+// ------------------------------------------- pegar/parsear mensaje WhatsApp
+// Prellena el formulario a partir del texto pegado, con reglas simples contra
+// la Carta (sin IA). No pretende acertar el 100%: acierta lo evidente y el
+// usuario corrige. Ver parseMensajeWhatsApp (función pura, testeable a mano).
+
+// Normaliza para comparar: minúsculas, sin acentos, sin puntuación.
+function _norm(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Cantidades escritas con palabra (hasta diez alcanza para un pedido).
+const _NUM_PALABRA = {
+  un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
+  seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, docena: 12, media: 6,
+};
+
+// Palabras que sugieren que una línea es la dirección de entrega.
+const _PISTAS_DIRECCION = [
+  "calle", "av", "avenida", "pasaje", "psje", "piso", "depto", "dpto", "dto",
+  "departamento", "timbre", "esquina", "entre", "torre", "block", "manzana",
+  "mza", "casa", "lote", "barrio", "altura", "ruta", "km",
+];
+
+// Cantidad dentro de un segmento de ítem: primer número (dígitos o palabra).
+function _cantidadDe(seg, norm) {
+  const m = norm.match(/(?:^|\s)x?\s*(\d{1,2})(?:\s|x|$)/);
+  if (m) return Math.min(50, Math.max(1, parseInt(m[1], 10)));
+  for (const w of norm.split(" ")) {
+    if (_NUM_PALABRA[w]) return _NUM_PALABRA[w];
+  }
+  return 1;
+}
+
+// ¿El plato (por su nombre normalizado) aparece en el segmento? Match por
+// substring o por presencia de todas sus palabras significativas (>3 letras).
+function _platoEnSegmento(nombreNorm, segNorm, segWords) {
+  if (nombreNorm.length < 3) return false;
+  if (segNorm.includes(nombreNorm)) return true;
+  // Cada palabra significativa (>3 letras) del plato tiene que estar en el
+  // segmento, tolerando plural/singular por prefijo ("milanesas"~"milanesa").
+  const sig = nombreNorm.split(" ").filter((w) => w.length > 3);
+  const casa = (w) => segWords.some(
+    (sw) => sw === w || (sw.length > 3 && (sw.startsWith(w) || w.startsWith(sw)))
+  );
+  return sig.length > 0 && sig.every(casa);
+}
+
+function _detectarPago(norm) {
+  if (/\btransfer/.test(norm) || /\btransf\b/.test(norm)) return "Transferencia";
+  if (/\befectivo\b|\befvo\b|\bcash\b/.test(norm)) return "Efectivo";
+  if (/\bqr\b|mercado ?pago|\bmp\b/.test(norm)) return "QR";
+  if (/posnet|tarjeta|debito|credito|\bpos\b/.test(norm)) return "Posnet";
+  return null;
+}
+
+// "paga con 20000", "abona con 20 mil", "vuelto de 5000", "justo".
+function _detectarPagaCon(texto, norm) {
+  if (/\b(justo|exacto|pago justo)\b/.test(norm)) return "Justo";
+  const m = texto.match(/(?:paga|abona|pago)\s+con\s*\$?\s*([\d.]{3,})/i)
+    || texto.match(/vuelto\s+(?:de|para|sobre)?\s*\$?\s*([\d.]{3,})/i);
+  if (m) return m[1].replace(/\./g, "");
+  return null;
+}
+
+// Teléfono: preferimos una línea etiquetada; si no, una tira larga de dígitos.
+function _detectarTelefono(lineas) {
+  for (const l of lineas) {
+    if (/\b(tel|telefono|cel|celular|whatsapp|wsp|wpp)\b/i.test(_norm(l))) {
+      const d = l.replace(/\D/g, "");
+      if (d.length >= 8 && d.length <= 15) return d;
+    }
+  }
+  for (const l of lineas) {
+    const m = l.match(/(?:\+?\d[\s\-]?){8,15}/);
+    if (m) {
+      const d = m[0].replace(/\D/g, "");
+      // Evitar confundir un monto ("paga con 20000") con un teléfono.
+      if (d.length >= 8 && d.length <= 15 && !/paga|abona|vuelto/i.test(l)) return d;
+    }
+  }
+  return null;
+}
+
+// Palabras que marcan una aclaración de entrega (van a Indicaciones, no a la
+// dirección). Se dejan afuera "entre"/"esquina" porque ayudan a ubicar la calle.
+const _KW_INDIC = /\b(pisos?|depto|dpto|dto|departamento|timbre|portero|porteria|planta baja|pb|fondo|contrafrente|interno)\b/i;
+// Instrucciones de entrega ("que me llamen al...", "avisen cuando...") que no
+// son parte del domicilio aunque vengan pegadas en la misma línea.
+const _KW_INSTRUCCION = /\b(llam[ae]|llamen|avis[ae]|avisen|toc[ae]|tocar|subir|bajar|buscar|buscarlo|buscarla|esperar|esperan|cuando|porfa|por favor)\b/i;
+
+// Separa el domicilio de sus aclaraciones. Devuelve {direccion, indicaciones}.
+// Divide por comas (y por " - ", común cuando el cliente agrega una instrucción
+// después del domicilio) y, dentro de una parte sin separador ("Suipacha 1234
+// piso 3"), corta en la primera palabra de aclaración. La primera parte siempre
+// se toma como domicilio; las siguientes van a indicaciones salvo que sumen
+// información de calle ("entre X e Y" o "calle + altura").
+function _partirDireccion(linea) {
+  const partes = linea.split(/,| - /).map((s) => s.trim()).filter(Boolean);
+  const dir = [], ind = [];
+  partes.forEach((parte, i) => {
+    const m = parte.match(_KW_INDIC);
+    if (m) {
+      if (m.index <= 2) { ind.push(parte); return; } // toda la parte es aclaración
+      dir.push(parte.slice(0, m.index).trim());        // "Suipacha 1234"
+      ind.push(parte.slice(m.index).trim());           // "piso 3"
+      return;
+    }
+    if (i === 0) { dir.push(parte); return; }
+    if (_KW_INSTRUCCION.test(parte)) { ind.push(parte); return; }
+    if (/\b(entre|esquina)\b/i.test(parte) || /[a-záéíóúñ]{3,}\s+\d{2,5}/i.test(parte)) {
+      dir.push(parte); return;
+    }
+    ind.push(parte);
+  });
+  let direccion = dir.filter(Boolean).join(", ");
+  const indicaciones = ind.filter(Boolean).join(", ");
+  if (!direccion) direccion = linea; // si todo pareció aclaración, no perder el dato
+  return { direccion, indicaciones: direccion === linea ? "" : indicaciones };
+}
+
+// "Venezuela 151 6b" -> {direccion: "Venezuela 151", indicacion: "6b"}. Corta
+// un token corto (piso/depto abreviado tipo "6b", "2do") pegado al final de una
+// calle+altura ya identificada.
+function _separarUnidad(direccion) {
+  const m = direccion.match(/^([a-záéíóúñ0-9°ºª.\s]*?\d{1,5})\s+([0-9]{1,3}[a-z]{1,2}|[a-z]{1,2}[0-9]{1,3})$/i);
+  if (!m) return { direccion, indicacion: "" };
+  return { direccion: m[1].trim(), indicacion: m[2].trim() };
+}
+
+// Etiqueta al inicio de línea, como campo clásico ("Dirección: Suipacha 123")
+// o en negrita estilo plantilla de WhatsApp sin dos puntos ("*Dirección y
+// aclaraciones* Suipacha 123"). Devuelve {clave, resto} o null.
+function _extraerEtiqueta(linea) {
+  let m = linea.match(/^\s*\*\s*([a-záéíóúñ. ]+?)\s*\*\s*[:\-]?\s*(.*)$/i);
+  if (!m) m = linea.match(/^\s*([a-záéíóúñ. ]+?)\s*[:\-]\s*(.+)$/i);
+  if (!m) return null;
+  return { clave: _norm(m[1]), resto: m[2].trim() };
+}
+
+// Devuelve el valor si la línea empieza con una de las `etiquetas` (ver
+// _extraerEtiqueta), o null si no matchea ninguna.
+function _campoEtiquetado(linea, etiquetas) {
+  const e = _extraerEtiqueta(linea);
+  if (!e) return null;
+  if (etiquetas.some((et) => e.clave === et || e.clave.startsWith(et))) return e.resto;
+  return null;
+}
+
+// Encabezados de la plantilla que le pedimos al cliente por WhatsApp
+// ("Ensaladas y cantidades", "Especificaciones", "Medio de pago") que no
+// mapean a un campo propio: si quedan sueltos (por ejemplo en negrita, sin
+// dato adjunto) hay que descartarlos para que no contaminen la heurística de
+// nombre/dirección.
+const _HEADERS_IGNORAR = [
+  "ensaladas y cantidades", "platos y cantidades", "productos y cantidades",
+  "especificaciones", "especificacion", "medio de pago",
+];
+
+// Quita el prefijo que WhatsApp agrega en cada línea al copiar/exportar una
+// conversación ("[12:15 p.m., 23/7/2026] Nombre:" o "23/7/2026, 12:15 - Nombre:").
+// Sin esos prefijos el timestamp no ensucia cantidades/teléfono y las líneas
+// quedan limpias. Devuelve {texto, remitente} (remitente = quien más escribió,
+// el cliente). Si no hay prefijos, devuelve el texto igual y remitente null.
+function _limpiarWhatsApp(texto) {
+  const RE_IOS = /^\s*\[[^\]\n]*\]\s*([^:\n]{1,40}?):\s*/;        // [hora, fecha] Nombre:
+  const RE_AND = /^\s*\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}(?:\s*[ap]\.?\s*m\.?)?\s*-\s*([^:\n]{1,40}?):\s*/i;
+  const remitentes = {};
+  let hubo = false;
+  const limpio = (texto || "").split(/\r?\n/).map((l) => {
+    const m = l.match(RE_IOS) || l.match(RE_AND);
+    if (!m) return l;
+    hubo = true;
+    const r = m[1].trim();
+    remitentes[r] = (remitentes[r] || 0) + 1;
+    return l.slice(m[0].length);
+  }).join("\n");
+  if (!hubo) return { texto, remitente: null };
+  let remitente = null, mejor = 0;
+  for (const [r, n] of Object.entries(remitentes)) if (n > mejor) { mejor = n; remitente = r; }
+  return { texto: limpio, remitente };
+}
+
+// Limpia el nombre del remitente de WhatsApp: corta en separadores comunes y
+// descarta la cola desde el primer número ("Cami reserva // Venezuela 151 6B"
+// -> "Cami reserva").
+function _nombreDeRemitente(remitente) {
+  if (!remitente) return null;
+  let n = remitente.split(/\/\/|\||,|-|:/)[0].trim();  // antes del primer separador
+  n = n.replace(/\s+\d.*$/, "").trim();                // saca la parte con números
+  return n || null;
+}
+
+// Dirección guardada en el nombre de contacto de WhatsApp ("Santiago //
+// Venezuela 151 6b" -> "Venezuela 151 6b"). Se usa solo como último recurso,
+// cuando el mensaje no trae dirección propia (p. ej. el cliente ya la había
+// mandado en otra ocasión y ahora solo escribe el pedido).
+function _direccionDeRemitente(remitente) {
+  if (!remitente || !remitente.includes("//")) return null;
+  const resto = remitente.split("//").slice(1).join("//").trim();
+  return /\d/.test(resto) ? resto : null; // sin número no parece una dirección
+}
+
+// Núcleo del parser. `platos` es state.platos (se filtran los del día).
+function parseMensajeWhatsApp(texto, platos) {
+  const limpio = _limpiarWhatsApp(texto);
+  texto = limpio.texto;
+  const lineas = (texto || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const normTotal = _norm(texto);
+  const catalogo = platos
+    .filter((p) => !p.es_plato_del_dia)
+    .map((p) => ({ p, nombreNorm: _norm(p.nombre) }));
+
+  const res = {
+    nombre: null, direccion: null, telefono: null, indicaciones: null,
+    metodo_pago: null, paga_con: null, items: [], faltantes: [],
+  };
+
+  // Campos etiquetados explícitos (ganan a cualquier heurística).
+  const indics = [];
+  const lineasLibres = [];
+  for (const l of lineas) {
+    const nom = _campoEtiquetado(l, ["nombre", "cliente"]);
+    const dir = _campoEtiquetado(l, ["direccion", "dir", "domicilio", "direc"]);
+    const ind = _campoEtiquetado(l, ["timbre", "piso", "depto", "dpto", "indicaciones", "aclaracion", "aclaraciones", "referencia", "especificaciones", "especificacion"]);
+    if (nom) { res.nombre = res.nombre || nom; continue; }
+    if (dir) { res.direccion = res.direccion || dir; continue; }
+    if (ind) { indics.push(ind); continue; }
+    const etq = _extraerEtiqueta(l);
+    if (etq && _HEADERS_IGNORAR.includes(etq.clave)) continue; // encabezado de plantilla sin dato propio
+    lineasLibres.push(l);
+  }
+
+  // Ítems: se busca en cada segmento (separado por saltos, comas, "+", "y").
+  const porPlato = new Map();
+  const segmentos = (texto || "").split(/[\n,+]+|\by\b/i);
+  for (const seg of segmentos) {
+    const segNorm = _norm(seg);
+    if (!segNorm) continue;
+    const segWords = segNorm.split(" ");
+    let mejor = null;
+    for (const c of catalogo) {
+      if (_platoEnSegmento(c.nombreNorm, segNorm, segWords)) {
+        if (!mejor || c.nombreNorm.length > mejor.nombreNorm.length) mejor = c;
+      }
+    }
+    if (!mejor) continue;
+    const cant = _cantidadDe(seg, segNorm);
+    const prev = porPlato.get(mejor.p.id);
+    if (prev) prev.cantidad += cant;
+    else porPlato.set(mejor.p.id, { plato_id: mejor.p.id, nombre: mejor.p.nombre, cantidad: cant });
+  }
+  res.items = [...porPlato.values()];
+
+  // Pago y "paga con".
+  res.metodo_pago = _detectarPago(normTotal);
+  res.paga_con = _detectarPagaCon(texto, normTotal);
+
+  // Teléfono.
+  res.telefono = _detectarTelefono(lineas);
+
+  // Dirección por heurística si no vino etiquetada: la línea libre con más
+  // pistas de dirección (o que tenga calle + número), que no sea el teléfono.
+  if (!res.direccion) {
+    let mejorDir = null, mejorScore = 0;
+    for (const l of lineasLibres) {
+      const n = _norm(l);
+      if (!n) continue;
+      let score = _PISTAS_DIRECCION.reduce((s, k) => s + (new RegExp("\\b" + k + "\\b").test(n) ? 1 : 0), 0);
+      // Calle + altura: letras seguidas de un número (típico "Suipacha 1234").
+      if (/[a-z]{3,}\s+\d{2,5}/.test(n)) score += 2;
+      // Restar si la línea es claramente un ítem del pedido.
+      if (catalogo.some((c) => _platoEnSegmento(c.nombreNorm, n, n.split(" ")))) score -= 3;
+      if (res.telefono && l.replace(/\D/g, "") === res.telefono) score -= 5;
+      if (score > mejorScore) { mejorScore = score; mejorDir = l; }
+    }
+    if (mejorDir) res.direccion = mejorDir;
+  }
+  // Último recurso: la dirección guardada en el nombre de contacto de
+  // WhatsApp (típico cuando el cliente ya mandó la dirección otra vez y en
+  // este mensaje solo pide el plato).
+  if (!res.direccion) {
+    const dirRem = _direccionDeRemitente(limpio.remitente);
+    if (dirRem) res.direccion = dirRem;
+  }
+  // Sacar una preposición o muletilla inicial de la dirección ("Para
+  // Venezuela 151" -> "Venezuela 151", "es 25 de mayo 359" -> "25 de mayo 359").
+  if (res.direccion) {
+    res.direccion = res.direccion.replace(/^\s*(para|pa|a|en|es|direccion|direc|dir)\b[\s:]*/i, "").trim();
+  }
+
+  // Nombre: si no vino etiquetado, usar el remitente de WhatsApp (fuerte); si no,
+  // la primera línea libre corta, sin dígitos, que no sea saludo/ítem/pago.
+  if (!res.nombre) res.nombre = _nombreDeRemitente(limpio.remitente);
+  if (!res.nombre) {
+    // Saludos y frases de relleno que no son un nombre.
+    const RELLENO = /^(hola|buenas|buen dia|buenos dias|buenas tardes|buenas noches|como estan|como andan|que tal|gracias|te puedo pedir|queria|quiero|necesito|hola buenas|pedido|hola que tal)\b/;
+    for (const l of lineasLibres) {
+      if (l === res.direccion) continue;
+      const n = _norm(l);
+      if (!n || /\d/.test(l)) continue;
+      if (n.split(" ").length > 4) continue;
+      if (RELLENO.test(n)) continue;
+      if (catalogo.some((c) => _platoEnSegmento(c.nombreNorm, n, n.split(" ")))) continue;
+      if (_detectarPago(n)) continue;
+      res.nombre = l;
+      break;
+    }
+  }
+
+  // Separar la dirección de sus aclaraciones (piso/depto/timbre/instrucciones
+  // de entrega → Indicaciones), venga etiquetada o por heurística. Lo
+  // extraído se suma a las indicaciones.
+  if (res.direccion) {
+    const unidad = _separarUnidad(res.direccion);
+    if (unidad.indicacion) { res.direccion = unidad.direccion; indics.push(unidad.indicacion); }
+    const partida = _partirDireccion(res.direccion);
+    res.direccion = partida.direccion;
+    // Segunda pasada: recién ahora que _partirDireccion sacó la palabra clave
+    // puede quedar la unidad pegada al final ("Lavalle 1268 7mo piso" deja
+    // "Lavalle 1268 7mo"). Ese "7mo" pegado a la altura hace que Google Maps
+    // reinterprete la dirección y caiga en otra cuadra, así que va a
+    // Indicaciones como cualquier otro piso (adelante de lo que separó
+    // _partirDireccion, para que se lea "7mo piso" y no "piso · 7mo").
+    const unidad2 = _separarUnidad(res.direccion);
+    if (unidad2.indicacion) {
+      res.direccion = unidad2.direccion;
+      indics.push([unidad2.indicacion, partida.indicaciones].filter(Boolean).join(" "));
+    } else if (partida.indicaciones) {
+      indics.push(partida.indicaciones);
+    }
+  }
+  if (indics.length) res.indicaciones = indics.join(" · ");
+
+  // Chequeo de datos faltantes (idea 3): avisos accionables.
+  if (!res.items.length) res.faltantes.push("ítems (no se reconoció ningún plato de la Carta)");
+  if (!res.nombre) res.faltantes.push("nombre del cliente");
+  if (!res.metodo_pago) res.faltantes.push("medio de pago");
+  if (!res.direccion) res.faltantes.push("dirección");
+  if (!res.telefono) res.faltantes.push("teléfono (opcional)");
+  return res;
+}
+
+// Si el cliente ya está en la base (coincide el nombre), completa los datos
+// que el mensaje no trajo (típicamente el teléfono, que casi nunca se repite
+// en cada pedido) con lo que ya tenemos guardado. `res.sugeridoDeFicha` lista
+// los campos completados así, para avisar en el reporte que conviene revisarlos.
+async function completarConClienteExistente(res) {
+  res.sugeridoDeFicha = [];
+  if (!res.nombre) return res;
+  let candidatos;
+  try {
+    candidatos = await api("/api/clientes?q=" + encodeURIComponent(res.nombre));
+  } catch {
+    return res; // sin conexión o error de red: seguimos solo con lo parseado
+  }
+  const nNorm = _norm(res.nombre);
+  const match = candidatos.find((c) => _norm(c.nombre) === nNorm) || (candidatos.length === 1 ? candidatos[0] : null);
+  if (!match) return res;
+  if (!res.telefono && match.telefono) { res.telefono = match.telefono; res.sugeridoDeFicha.push("telefono"); }
+  if (!res.direccion && match.direccion) { res.direccion = match.direccion; res.sugeridoDeFicha.push("direccion"); }
+  if (!res.indicaciones && match.indicaciones) { res.indicaciones = match.indicaciones; res.sugeridoDeFicha.push("indicaciones"); }
+  res.faltantes = res.faltantes.filter((f) => {
+    if (f.startsWith("teléfono") && res.telefono) return false;
+    if (f === "dirección" && res.direccion) return false;
+    return true;
+  });
+  return res;
+}
+
+// Aplica el resultado del parser al formulario y al estado de ítems.
+function aplicarParseWA(res) {
+  if (res.nombre) $("f-cliente").value = res.nombre;
+  if (res.direccion) $("f-direccion").value = res.direccion;
+  if (res.telefono) $("f-telefono").value = res.telefono;
+  if (res.indicaciones) $("f-indicaciones").value = res.indicaciones;
+  if (res.metodo_pago) $("f-pago").value = res.metodo_pago;
+  toggleVuelto();
+  if (res.paga_con && $("f-pago").value === "Efectivo") $("f-vuelto").value = res.paga_con;
+
+  if (res.items.length) {
+    // El precio se toma de la Carta según el método de pago ya fijado arriba.
+    state.items = res.items.map((it) => {
+      const p = state.platos.find((x) => x.id === it.plato_id);
+      return {
+        plato_id: it.plato_id,
+        nombre: p ? p.nombre : it.nombre,
+        precio_unitario: p ? precioSegunMetodo(p) : 0,
+        cantidad: it.cantidad,
+        es_pdd: false,
+      };
+    });
+  }
+  renderItems(); toggleEnvio(); recalc(); updateVueltoCalc();
+}
+
+// Resumen visible de lo detectado y lo que falta.
+function renderReporteWA(res) {
+  const cont = $("wa-report");
+  const filas = [];
+  const sugerido = res.sugeridoDeFicha || [];
+  const ok = (t, v, campo) => {
+    const nota = campo && sugerido.includes(campo) ? " (de ficha existente, revisar)" : "";
+    filas.push(`<div class="wa-line"><span class="wa-ok">✓</span><span>${escapeHtml(t)}</span><span class="wa-val">${escapeHtml(v)}${escapeHtml(nota)}</span></div>`);
+  };
+  if (res.nombre) ok("Cliente:", res.nombre);
+  if (res.direccion) ok("Dirección:", res.direccion, "direccion");
+  if (res.telefono) ok("Teléfono:", res.telefono, "telefono");
+  if (res.items.length) ok("Ítems:", res.items.map((i) => `${i.cantidad}× ${i.nombre}`).join(", "));
+  if (res.metodo_pago) ok("Pago:", res.metodo_pago + (res.paga_con ? ` (paga con ${res.paga_con})` : ""));
+  if (res.indicaciones) ok("Indicaciones:", res.indicaciones, "indicaciones");
+  for (const f of res.faltantes) {
+    filas.push(`<div class="wa-line"><span class="wa-falta">⚠</span><span class="wa-falta">Falta ${escapeHtml(f)}</span></div>`);
+  }
+  cont.innerHTML = filas.join("");
+  cont.classList.remove("hidden");
+}
+
+$("wa-parse").addEventListener("click", async () => {
+  const texto = $("wa-text").value;
+  if (!texto.trim()) { toast("Pegá primero el mensaje del cliente.", "info"); return; }
+  const res = parseMensajeWhatsApp(texto, state.platos);
+  await completarConClienteExistente(res);
+  aplicarParseWA(res);
+  renderReporteWA(res);
+  const n = res.items.length;
+  toast(n ? `Prellenado: ${n} ítem(s) reconocido(s). Revisá y corregí.` : "No se reconocieron platos; completá a mano.", n ? "ok" : "info");
+});
+
+$("wa-clear").addEventListener("click", () => {
+  $("wa-text").value = "";
+  $("wa-report").classList.add("hidden");
+  $("wa-report").innerHTML = "";
+});
+
+// ------------------------------------------------------ repartidores del día
+async function loadRepartidoresDia() {
+  const r = await api("/api/repartidores-dia?fecha=" + state.fecha);
+  state.repartidoresDia = r.nombres;
+  const actual = $("f-repartidor").value || (state.editId ? "" : repartidorDefault());
+  fillRepartidorSelect($("f-repartidor"), actual);
+  const lbl = $("rep-dia-label");
+  lbl.textContent = r.nombres.length ? r.nombres.join(" / ") : "Repartidores";
+}
+
+// Llena un <select> con "(sin asignar)" + repartidores del día. Si el valor
+// actual no está en la lista (ej. un pedido viejo), se agrega para no perderlo.
+// Opciones <option> de un select de repartidor: "(sin asignar)" + los nombres,
+// marcando `seleccionado`. Si `seleccionado` no está en la lista se agrega (un
+// repartidor histórico que ya no está entre los del día sigue visible).
+function opcionesRepartidor(nombres, seleccionado) {
+  const lista = [...nombres];
+  if (seleccionado && !lista.includes(seleccionado)) lista.push(seleccionado);
+  return `<option value="">(sin asignar)</option>` +
+    lista.map((n) => `<option value="${escapeAttr(n)}" ${n === seleccionado ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
+}
+
+function fillRepartidorSelect(sel, actual) {
+  sel.innerHTML = opcionesRepartidor(state.repartidoresDia, actual);
+  sel.value = actual || "";
+}
+
+// Callback opcional para encadenar preguntas de inicio del día.
+let onRepModalClosed = null;
+function fireRepClosed() {
+  if (typeof onRepModalClosed === "function") { const cb = onRepModalClosed; onRepModalClosed = null; cb(); }
+}
+
+$("btn-repartidores").addEventListener("click", openRepModal);
+$("rep-cancel").addEventListener("click", () => { $("modal-rep").classList.remove("show"); fireRepClosed(); });
+$("rep-save").addEventListener("click", async () => {
+  const nombres = [$("rep-1").value.trim(), $("rep-2").value.trim()].filter(Boolean);
+  await api("/api/repartidores-dia?fecha=" + state.fecha, {
+    method: "PUT", body: JSON.stringify({ nombres }),
+  });
+  $("modal-rep").classList.remove("show");
+  await loadRepartidoresDia();
+  renderTabla();
+  fireRepClosed();
+});
+
+async function openRepModal() {
+  $("rep-modal-fecha").textContent = state.fecha === todayISO()
+    ? "Hoy — " + fmtFecha(state.fecha) : fmtFecha(state.fecha);
+  $("rep-1").value = state.repartidoresDia[0] || "";
+  $("rep-2").value = state.repartidoresDia[1] || "";
+  try {
+    const hist = await api("/api/pedidos/repartidores");
+    $("rep-historial").innerHTML = hist.map((h) => `<option value="${escapeAttr(h)}">`).join("");
+  } catch (e) {}
+  $("modal-rep").classList.add("show");
+}
+
+// -------------------------------------------------- listas de orden manual
+let _arrastrando = null;   // {ol, i} de la fila que se está arrastrando
+
+// Lista de paradas reordenable a mano (botones ↑/↓ y arrastrando), usada tanto
+// en las rutas optimizadas como en el ticket combinado. Muta el mismo array que
+// le pasa el llamador y avisa por `onCambio` después de cada movida, así quien
+// la usa vuelve a leer su propio array ya ordenado (y regenera imagen, links,
+// lo que corresponda; la lista ya se redibujó sola).
+//
+// `etiqueta(item)` devuelve el HTML de la fila y es responsable de escapar.
+function renderListaOrden(ol, items, etiqueta, onCambio) {
+  const mover = (desde, hasta) => {
+    if (desde === hasta || hasta < 0 || hasta >= items.length) return;
+    const [it] = items.splice(desde, 1);
+    items.splice(hasta, 0, it);
+    renderListaOrden(ol, items, etiqueta, onCambio);
+    onCambio();
+  };
+
+  ol.classList.add("orden-lista");   // sin pisar las clases propias del <ol>
+  ol.innerHTML = items.map((it, i) => `
+    <li class="orden-item" draggable="true" data-i="${i}">
+      <span class="orden-num">${i + 1}</span>
+      <span class="orden-texto">${etiqueta(it, i)}</span>
+      <span class="orden-botones">
+        <button type="button" class="btn ghost sm orden-sube" ${i === 0 ? "disabled" : ""} title="Subir" aria-label="Subir">↑</button>
+        <button type="button" class="btn ghost sm orden-baja" ${i === items.length - 1 ? "disabled" : ""} title="Bajar" aria-label="Bajar">↓</button>
+      </span>
+    </li>`).join("");
+
+  ol.querySelectorAll(".orden-item").forEach((li) => {
+    const i = +li.dataset.i;
+    li.querySelector(".orden-sube").addEventListener("click", () => mover(i, i - 1));
+    li.querySelector(".orden-baja").addEventListener("click", () => mover(i, i + 1));
+    li.addEventListener("dragstart", (e) => {
+      _arrastrando = { ol, i };
+      li.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      // Firefox no arranca el arrastre si no se setea algo en el dataTransfer.
+      e.dataTransfer.setData("text/plain", String(i));
+    });
+    li.addEventListener("dragend", () => {
+      _arrastrando = null;
+      ol.querySelectorAll(".orden-item").forEach((o) => o.classList.remove("dragging", "drop-target"));
+    });
+    li.addEventListener("dragover", (e) => {
+      if (!_arrastrando || _arrastrando.ol !== ol) return;   // no mezclar grupos
+      e.preventDefault();
+      li.classList.add("drop-target");
+    });
+    li.addEventListener("dragleave", () => li.classList.remove("drop-target"));
+    li.addEventListener("drop", (e) => {
+      if (!_arrastrando || _arrastrando.ol !== ol) return;
+      e.preventDefault();
+      const desde = _arrastrando.i;
+      // El re-render se lleva puesto el <li> original, así que su `dragend` no
+      // llega: se limpia acá antes de mover.
+      _arrastrando = null;
+      mover(desde, i);
+    });
+  });
+}
+
+// ---------------------------------------------------------- rutas optimizadas
+$("btn-rutas").addEventListener("click", openRutasModal);
+$("rutas-cerrar").addEventListener("click", () => $("modal-rutas").classList.remove("show"));
+
+async function openRutasModal() {
+  $("rutas-fecha").textContent = state.fecha === todayISO()
+    ? "Hoy — " + fmtFecha(state.fecha) : fmtFecha(state.fecha);
+  $("rutas-contenido").innerHTML = `<p class="muted">Calculando…</p>`;
+  $("modal-rutas").classList.add("show");
+  try {
+    const r = await api("/api/rutas?fecha=" + state.fecha);
+    renderRutas(r);
+  } catch (e) {
+    $("rutas-contenido").innerHTML = `<p class="banner warn">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function rutasSelectHtml(gi, nombres, seleccionado) {
+  return `<select class="inline rutas-select" data-gi="${gi}">${opcionesRepartidor(nombres, seleccionado)}</select>`;
+}
+
+// Evita que dos grupos queden asignados al mismo repartidor por accidente:
+// al elegir un nombre en un select, lo saca de cualquier otro que lo tuviera.
+function evitarSeleccionDuplicada(cont) {
+  cont.querySelectorAll(".rutas-select").forEach((sel) => {
+    sel.addEventListener("change", () => {
+      if (!sel.value) return;
+      cont.querySelectorAll(".rutas-select").forEach((otro) => {
+        if (otro !== sel && otro.value === sel.value) otro.value = "";
+      });
+    });
+  });
+}
+
+function renderRutas(r) {
+  const cont = $("rutas-contenido");
+  if (!r.grupos.length && !r.sin_geocodificar.length) {
+    cont.innerHTML = `<p class="muted">No hay envíos pendientes de salir para este día.</p>`;
+    return;
+  }
+  const nombres = r.repartidores_dia || [];
+  let html = r.aviso ? `<p class="banner warn">${escapeHtml(r.aviso)}</p>` : `<p class="muted">Orden y reparto según tiempo de viaje por calles, con regreso al local. Sin tráfico en vivo.</p>`;
+  r.grupos.forEach((g, gi) => {
+    const preseleccion = nombres[gi] || "";
+    html += `
+      <div class="card" style="margin-top:.8rem;">
+        <h3 style="margin:0 0 .4rem;">🛵 Repartidor ${escapeHtml(g.etiqueta)} — ${g.pedidos.length} parada${g.pedidos.length === 1 ? "" : "s"}</h3>
+        ${g.minutos_estimados != null ? `<p class="muted">Viaje estimado: ${g.minutos_estimados} min · incluye regreso, sin tiempo de entrega.</p>` : ""}
+        <ol class="orden-lista rutas-orden" data-gi="${gi}"></ol>
+        <div class="row" style="flex-wrap:wrap;align-items:center;margin-top:.6rem;">
+          <a class="btn secondary sm rutas-maps" data-gi="${gi}" href="#" target="_blank" rel="noopener">🗺️ Abrir ruta en Google Maps</a>
+          <button type="button" class="btn secondary sm rutas-ticket" data-gi="${gi}">🖼 Ticket del repartidor (${g.pedidos.length})</button>
+          <label class="muted" style="margin-left:.4rem;">Asignar a:</label>
+          ${rutasSelectHtml(gi, nombres, preseleccion)}
+        </div>
+      </div>`;
+  });
+  if (r.sin_geocodificar.length) {
+    const items = r.sin_geocodificar.map((p) =>
+      `<li>${escapeHtml(p.cliente_nombre || "(sin nombre)")} — ${escapeHtml(p.cliente_direccion)}${p.numero != null ? ` (N° ${p.numero})` : ""}</li>`
+    ).join("");
+    html += `
+      <div class="card" style="margin-top:.8rem;">
+        <h3 style="margin:0 0 .4rem;">⚠ No se pudieron ubicar en el mapa</h3>
+        <p class="muted" style="font-size:.85rem;">Revisá estas direcciones y asignalas a mano en la tabla.</p>
+        <ul style="margin:.2rem 0 0 1.2rem;padding:0;">${items}</ul>
+      </div>`;
+  }
+  if (r.grupos.length) {
+    html += `
+      <div class="row" style="justify-content:flex-end;margin-top:1rem;">
+        <button type="button" class="btn" id="rutas-confirmar">✅ Confirmar y asignar todo</button>
+      </div>`;
+  }
+  cont.innerHTML = html;
+  evitarSeleccionDuplicada(cont);
+
+  // Paradas de cada grupo: el orden que sugiere la API es solo el punto de
+  // partida, el usuario lo reacomoda a mano. Cada movida reescribe el link de
+  // Maps del grupo y queda guardada para el ticket combinado.
+  cont.querySelectorAll(".rutas-orden").forEach((ol) => {
+    const gi = +ol.dataset.gi;
+    const g = r.grupos[gi];
+    const link = cont.querySelector(`.rutas-maps[data-gi="${gi}"]`);
+    const pintarLink = () => {
+      link.href = googleMapsRouteLink(g.pedidos.map((p) => p.cliente_direccion), null, true);
+    };
+    renderListaOrden(
+      ol,
+      g.pedidos,
+      (p) => `${escapeHtml(p.cliente_nombre || "(sin nombre)")} — ${escapeHtml(p.cliente_direccion)}`
+             + (p.numero != null ? ` <span class="muted">(N° ${p.numero})</span>` : ""),
+      () => {
+        pintarLink();
+        guardarOrdenLote("Repartidor " + g.etiqueta, g.pedidos.map((p) => p.id));
+      },
+    );
+    pintarLink();
+  });
+
+  // Ticket combinado del grupo: se mapean los ids del grupo (recortados por la
+  // API de rutas) a los pedidos completos de state.pedidos, en el orden actual.
+  cont.querySelectorAll(".rutas-ticket").forEach((b) =>
+    b.addEventListener("click", () => {
+      const g = r.grupos[+b.dataset.gi];
+      const peds = g.pedidos.map((gp) => state.pedidos.find((p) => p.id === gp.id)).filter(Boolean);
+      guardarOrdenLote("Repartidor " + g.etiqueta, g.pedidos.map((p) => p.id));
+      openTicketLote(peds, "Repartidor " + g.etiqueta);
+    })
+  );
+
+  $("rutas-confirmar")?.addEventListener("click", async () => {
+    const btn = $("rutas-confirmar");
+    const asignaciones = r.grupos.map((g, gi) => ({
+      g, repartidor: cont.querySelector(`.rutas-select[data-gi="${gi}"]`).value,
+    })).filter((a) => a.repartidor);
+
+    if (!asignaciones.length) {
+      toast("Elegí al menos un repartidor para alguno de los grupos.", "error");
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Asignando…";
+    try {
+      for (const { g, repartidor } of asignaciones) {
+        for (const [orden_ruta, p] of g.pedidos.entries()) {
+          await api(`/api/pedidos/${p.id}`, { method: "PATCH", body: JSON.stringify({ repartidor, orden_ruta }) });
+        }
+        guardarOrdenLote("Repartidor " + repartidor, g.pedidos.map((p) => p.id));
+      }
+      btn.textContent = "✅ Asignado";
+      await loadDay();
+    } catch (e) {
+      toast("Error: " + e.message, "error");
+      btn.disabled = false;
+      btn.textContent = "✅ Confirmar y asignar todo";
+    }
+  });
+}
+
+// -------------------------------------------------------- plato del día (día)
+// Puede haber más de un plato del día en la misma fecha (state.platoDia.items).
+async function loadPlatoDia() {
+  const d = await api("/api/plato-del-dia?fecha=" + state.fecha);
+  state.platoDia = d;
+  const items = d.hay ? d.items : [];
+  const lbl = $("pdd-dia-label");
+  if (d.definido && d.hay && items.length) {
+    lbl.textContent = items.length === 1 ? items[0].nombre : `${items.length} platos`;
+  } else if (d.definido && !d.hay) {
+    lbl.textContent = "Sin plato del día";
+  } else {
+    lbl.textContent = "Plato del día";
+  }
+  // El botón "+ Plato del día" del formulario refleja el primero del día; si
+  // hay más de uno, se agrega un botón idéntico al lado por cada adicional.
+  $("add-pdd").textContent = items.length ? `+ ${items[0].nombre}` : "+ Plato del día";
+  const extra = $("pdd-extra-botones");
+  extra.innerHTML = items.slice(1).map((it, i) =>
+    `<button type="button" class="btn ghost sm pdd-extra" data-idx="${i + 1}">+ ${escapeHtml(it.nombre)}</button>`
+  ).join(" ");
+  extra.querySelectorAll(".pdd-extra").forEach((b) =>
+    b.addEventListener("click", () => addItem(true, +b.dataset.idx))
+  );
+}
+
+$("btn-plato-dia").addEventListener("click", openPddModal);
+$("pdd-hay").addEventListener("change", () => {
+  $("pdd-campos").style.display = $("pdd-hay").checked ? "" : "none";
+});
+
+// Filas editables del modal (independiente de state.platoDia hasta guardar).
+let pddEdit = [];
+
+function renderPddItems() {
+  const cont = $("pdd-items");
+  cont.innerHTML = "";
+  pddEdit.forEach((it, idx) => {
+    const row = document.createElement("div");
+    row.className = "pdd-item-row";
+    row.innerHTML = `
+      <div class="field" style="margin-bottom:.6rem;">
+        <label>Nombre del plato del día</label>
+        <input data-idx="${idx}" class="pdd-nombre" placeholder="Ej: Milanesa con puré" autocomplete="off" value="${escapeAttr(it.nombre)}" />
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Precio efectivo</label>
+          <input type="number" data-idx="${idx}" class="pdd-ef" step="100" value="${it.precio_efectivo}" />
+        </div>
+        <div class="field">
+          <label>Precio lista</label>
+          <input type="number" data-idx="${idx}" class="pdd-li" step="100" value="${it.precio_lista}" />
+        </div>
+        <div class="field" style="justify-content:flex-end;">
+          <button type="button" class="btn ghost sm pdd-igualar" data-idx="${idx}">= que los demás</button>
+        </div>
+        ${pddEdit.length > 1 ? `<div class="field" style="justify-content:flex-end;">
+          <button type="button" class="btn ghost sm pdd-quitar" data-idx="${idx}" title="Quitar">✕</button>
+        </div>` : ""}
+      </div>`;
+    cont.appendChild(row);
+  });
+  cont.querySelectorAll(".pdd-nombre").forEach((s) =>
+    s.addEventListener("input", (e) => { pddEdit[+e.target.dataset.idx].nombre = e.target.value; })
+  );
+  cont.querySelectorAll(".pdd-ef").forEach((s) =>
+    s.addEventListener("input", (e) => { pddEdit[+e.target.dataset.idx].precio_efectivo = +e.target.value || 0; })
+  );
+  cont.querySelectorAll(".pdd-li").forEach((s) =>
+    s.addEventListener("input", (e) => { pddEdit[+e.target.dataset.idx].precio_lista = +e.target.value || 0; })
+  );
+  cont.querySelectorAll(".pdd-igualar").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      const def = precioDefaultPlatos();
+      pddEdit[+e.currentTarget.dataset.idx].precio_efectivo = def.ef;
+      pddEdit[+e.currentTarget.dataset.idx].precio_lista = def.li;
+      renderPddItems();
+    })
+  );
+  cont.querySelectorAll(".pdd-quitar").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      pddEdit.splice(+e.currentTarget.dataset.idx, 1);
+      renderPddItems();
+    })
+  );
+}
+
+$("pdd-agregar").addEventListener("click", () => {
+  pddEdit.push({ nombre: "", precio_efectivo: 0, precio_lista: 0 });
+  renderPddItems();
+});
+
+$("pdd-save").addEventListener("click", async () => {
+  const hay = $("pdd-hay").checked;
+  const items = hay ? pddEdit.filter((it) => it.nombre.trim()) : [];
+  if (hay && !items.length) return toast("Poné el nombre de al menos un plato del día (o destildá \"Hoy hay plato del día\").", "error");
+  const body = { hay, items };
+  await api("/api/plato-del-dia?fecha=" + state.fecha, { method: "PUT", body: JSON.stringify(body) });
+  $("modal-pdd").classList.remove("show");
+  await loadPlatoDia();
+  if (typeof onPddModalClosed === "function") { const cb = onPddModalClosed; onPddModalClosed = null; cb(); }
+});
+
+function openPddModal() {
+  $("pdd-modal-fecha").textContent = state.fecha === todayISO()
+    ? "Hoy — " + fmtFecha(state.fecha) : fmtFecha(state.fecha);
+  const d = state.platoDia;
+  const def = precioDefaultPlatos();
+  $("pdd-hay").checked = d.definido ? d.hay : true;
+  $("pdd-campos").style.display = $("pdd-hay").checked ? "" : "none";
+  pddEdit = d.hay && d.items.length
+    ? d.items.map((it) => ({ nombre: it.nombre, precio_efectivo: it.precio_efectivo, precio_lista: it.precio_lista }))
+    : [{ nombre: "", precio_efectivo: def.ef, precio_lista: def.li }];
+  renderPddItems();
+  $("modal-pdd").classList.add("show");
+}
+
+// Callback opcional para encadenar el modal de plato del día al inicio del día.
+let onPddModalClosed = null;
+$("pdd-cancel").addEventListener("click", () => {
+  $("modal-pdd").classList.remove("show");
+  if (typeof onPddModalClosed === "function") { const cb = onPddModalClosed; onPddModalClosed = null; cb(); }
+});
+
+function setupAutocomplete(inputId, listId, fetcher) {
+  const input = $(inputId), list = $(listId);
+  let items = [], active = -1, timer = null, ultimoToken = 0;
+  const close = () => { list.classList.add("hidden"); active = -1; };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (!q) return close();
+    // Debounce (no tirar una consulta por cada tecla) + token para ignorar
+    // una respuesta vieja que llega después de una búsqueda más nueva (si no,
+    // el resultado que se ve puede quedar desincronizado de lo tipeado).
+    const token = ++ultimoToken;
+    timer = setTimeout(async () => {
+      const opts = await fetcher(q);
+      if (token !== ultimoToken) return;
+      items = opts;
+      if (!opts.length) return close();
+      list.innerHTML = opts.map((o, i) => `<div data-i="${i}">${escapeHtml(o.label)}</div>`).join("");
+      list.classList.remove("hidden");
+      list.querySelectorAll("div").forEach((d) =>
+        d.addEventListener("mousedown", (e) => { e.preventDefault(); opts[+d.dataset.i].onPick(); close(); })
+      );
+    }, 180);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (list.classList.contains("hidden")) return;
+    const divs = list.querySelectorAll("div");
+    if (e.key === "ArrowDown") { active = Math.min(active + 1, divs.length - 1); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { active = Math.max(active - 1, 0); e.preventDefault(); }
+    else if (e.key === "Enter" && active >= 0) { e.preventDefault(); items[active].onPick(); close(); return; }
+    else if (e.key === "Escape") { return close(); }
+    divs.forEach((d, i) => d.classList.toggle("active", i === active));
+  });
+  input.addEventListener("blur", () => setTimeout(close, 150));
+}
+
+// --------------------------------------------------------------- load day
+$("day-prev").addEventListener("click", () => shiftDay(-1));
+$("day-next").addEventListener("click", () => shiftDay(1));
+$("day-today").addEventListener("click", () => { state.fecha = todayISO(); loadDay(); });
+function shiftDay(d) {
+  const dt = new Date(state.fecha + "T00:00:00");
+  dt.setDate(dt.getDate() + d);
+  state.fecha = dt.toLocaleDateString("en-CA");
+  loadDay();
+}
+
+async function loadDay() {
+  $("f-fecha").value = state.fecha;
+  const label = state.fecha === todayISO() ? "Hoy — " + fmtFecha(state.fecha) : fmtFecha(state.fecha);
+  $("day-label").textContent = label;
+  // Los tres no dependen entre sí: en paralelo en vez de uno detrás del otro.
+  const [, , pedidos] = await Promise.all([
+    loadRepartidoresDia(),
+    loadPlatoDia(),
+    api("/api/pedidos?fecha=" + state.fecha),
+  ]);
+  // Evita reconstruir toda la tabla (pierde scroll/foco) si el refresco
+  // automático de cada minuto no trajo ningún cambio real.
+  const cambio = JSON.stringify(pedidos) !== JSON.stringify(state.pedidos);
+  state.pedidos = pedidos;
+  if (cambio) renderTabla();
+  loadResumen();
+  checkHoraLimite();
+}
+
+function fmtFecha(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("es-AR", { weekday: "short", day: "2-digit", month: "2-digit" });
+}
+
+// filtros
+$("filters").querySelectorAll(".chip").forEach((c) =>
+  c.addEventListener("click", () => {
+    $("filters").querySelectorAll(".chip").forEach((x) => x.classList.remove("active"));
+    c.classList.add("active");
+    state.filtro = c.dataset.f;
+    renderTabla();
+  })
+);
+
+// Vista global para decidir manualmente qué pedidos conviene mandar juntos.
+// No mira el repartidor asignado: incluye todo Envío que todavía no salió.
+$("mapa-pendientes-cerrar").addEventListener("click", () =>
+  $("modal-mapa-pendientes").classList.remove("show")
+);
+$("btn-mapa-pendientes").addEventListener("click", () => {
+  const pendientes = state.pedidos.filter(
+    (p) => p.tipo === "Envío" && !p.anulado && !p.hora_salida && !esperandoHoraProgramada(p)
+  );
+  if (!pendientes.length) {
+    toast("No hay envíos pendientes de salir para este día.", "info");
+    return;
+  }
+
+  // Una misma dirección puede tener más de un pedido. Para el mapa alcanza con
+  // una parada y además evitamos gastar waypoints repetidos.
+  const paradas = [];
+  const vistas = new Set();
+  for (const p of pendientes) {
+    const direccion = (p.cliente_direccion || "").trim();
+    if (!direccion) continue;
+    const clave = direccionParaMaps(direccion).toLocaleLowerCase("es-AR");
+    if (!clave || vistas.has(clave)) continue;
+    vistas.add(clave);
+    paradas.push({ direccion });
+  }
+
+  if (!paradas.length) {
+    toast("Los envíos pendientes no tienen direcciones cargadas.", "info");
+    return;
+  }
+
+  const sinDireccion = pendientes.filter((p) => !(p.cliente_direccion || "").trim()).length;
+  // Maps admite sólo 3 puntos intermedios en navegadores móviles. Mostrar
+  // tramos de hasta 4 destinos evita que desaparezcan paradas sin avisar.
+  // Se repite la última parada como origen del tramo siguiente.
+  const tramos = [];
+  for (let i = 0; i < paradas.length; i += 4) {
+    const grupo = paradas.slice(i, i + 4);
+    const origen = i ? paradas[i - 1].direccion : null;
+    const link = googleMapsRouteLink(grupo.map((p) => p.direccion), origen);
+    tramos.push({ grupo, link, primero: i + 1 });
+  }
+
+  const completo = googleMapsRouteLink(paradas.map((p) => p.direccion));
+  $("mapa-pendientes-info").textContent =
+    `${pendientes.length} pedidos, ${paradas.length} direcciones distintas. `
+    + "Abrí todos juntos o elegí los tramos. El orden es el de carga."
+    + (sinDireccion ? ` ${sinDireccion} sin dirección quedan fuera.` : "");
+  $("mapa-pendientes-contenido").innerHTML = `
+    <a class="btn" href="${escapeAttr(completo)}" target="_blank" rel="noopener">🗺️ Ver todos de una en Google Maps</a>
+    <p class="muted">Google Maps puede limitar las paradas según el dispositivo. Si omite alguna, usá los tramos.</p>
+    <details><summary class="btn secondary">Ver por tramos</summary>`
+    + tramos.map(({ grupo, link, primero }, i) => `
+      <div class="card" style="margin:.6rem 0;padding:.8rem;">
+        <strong>Tramo ${i + 1} · paradas ${primero}–${primero + grupo.length - 1}</strong>
+        <ol style="margin:.4rem 0 .7rem;">${grupo.map((p) =>
+          `<li>${escapeHtml(p.direccion)}</li>`).join("")}</ol>
+        <a class="btn secondary sm" href="${escapeAttr(link)}" target="_blank" rel="noopener">Abrir tramo en Google Maps</a>
+      </div>`).join("") + "</details>";
+  $("modal-mapa-pendientes").classList.add("show");
+  if (sinDireccion) {
+    toast(`${sinDireccion} pedido${sinDireccion === 1 ? "" : "s"} sin dirección no ${sinDireccion === 1 ? "se incluyó" : "se incluyeron"} en el mapa.`, "info");
+  }
+});
+
+function esperandoHoraProgramada(p) {
+  if (!p?.hora_salida_programada || p.hora_salida) return false;
+  const ts = new Date(p.hora_salida_programada).getTime();
+  return Number.isFinite(ts) && Date.now() < ts;
+}
+
+function pasaFiltro(p) {
+  switch (state.filtro) {
+    case "pend-salir": return p.tipo === "Envío" && !p.hora_salida && !p.anulado && !esperandoHoraProgramada(p);
+    case "pend-facturar": return !p.facturado && !p.anulado;
+    case "envio": return p.tipo === "Envío";
+    case "reserva": return p.tipo === "Reserva";
+    default: return true;
+  }
+}
+
+function repartidorSelectHtml(p) {
+  const opts = opcionesRepartidor(state.repartidoresDia, p.repartidor);
+  return `<select class="inline r-rep" ${p.anulado ? "disabled" : ""}>${opts}</select>`;
+}
+
+function renderTabla() {
+  const tb = $("tabla-body");
+  tb.innerHTML = "";
+  state.pedidos.filter(pasaFiltro).forEach((p) => tb.appendChild(renderRow(p)));
+}
+
+function hhmmAhora() {
+  const a = new Date();
+  return String(a.getHours()).padStart(2, "0") + ":" + String(a.getMinutes()).padStart(2, "0");
+}
+
+function renderRow(p) {
+  const tr = document.createElement("tr");
+  tr.dataset.id = p.id;
+  const esperandoProgramado = esperandoHoraProgramada(p);
+  if (p.anulado) tr.className = "anulado";
+  else {
+    // Ya salió: fila verde. Antes de una hora programada, la fila queda azul
+    // y no entra todavía al circuito de pendientes/rutas.
+    if (p.hora_salida) tr.classList.add("salio");
+    else if (esperandoProgramado) tr.classList.add("programado");
+    else {
+      if (p.demorado) tr.classList.add("demorado");
+      if (p.alerta_sin_facturar) tr.classList.add("sinfact");
+    }
+  }
+  const items = p.items.map((i) => `${i.cantidad}x ${escapeHtml(i.nombre)}`).join("<br>");
+  const hs = hhmm(p.hora_salida);
+  const hp = hhmm(p.hora_pedido);
+  const hsp = hhmm(p.hora_salida_programada);
+  // Todo el estado del pedido (salida programada, salida real, alertas,
+  // facturado) vive en una sola celda "Estado".
+  const badges = (hsp ? `<span class="badge programado" title="${esperandoProgramado ? "Todavía no entra en rutas ni demoras" : "Hora programada ya habilitada"}">⏱ SALIDA ${hsp}</span> ` : "") +
+                 (p.demorado ? '<span class="badge demora">DEMORA</span> ' : "") +
+                 (p.alerta_sin_facturar ? '<span class="badge sf">SIN FACT.</span> ' : "");
+  // Las reservas no "salen" con un repartidor: se retiran por el local, así
+  // que en vez de "Salió" llevan un botón "Reservado" que se marca (azul ->
+  // verde). Es el mismo dato de fondo (hora_salida), por eso la fila queda
+  // verde igual que en los envíos ya despachados.
+  const salida = p.tipo === "Reserva"
+    ? `<button class="btn sm r-reservado ${p.hora_salida ? "reservado-si" : ""}" ${p.anulado ? "disabled" : ""} title="${p.hora_salida ? "Reservado — clic para deshacer" : "Marcar la reserva como lista"}">✔ Reservado</button>${p.hora_salida ? ` <small class="muted">${hs}</small>` : ""}`
+    : p.hora_salida
+    ? `<span class="badge salio">🛵 SALIÓ</span> <input class="inline r-sal" type="time" value="${hs}" ${p.anulado ? "disabled" : ""} />
+       <button type="button" class="btn ghost sm r-des-salio" ${p.anulado ? "disabled" : ""} title="Deshacer: marcar que todavía no salió">✕</button>`
+    : `<button class="btn ok sm r-salio" ${p.anulado ? "disabled" : ""} title="Marcar que el pedido salió ahora">🛵 Salió</button>`;
+  tr.innerHTML = `
+    <td class="num-pedido">${p.numero ?? "—"}</td>
+    <td class="nowrap">${hp}</td>
+    <td><span class="tipo-pill">${escapeHtml(p.tipo)}</span></td>
+    <td><div>${escapeHtml(p.cliente_nombre)}</div><small class="muted">${escapeHtml(p.cliente_direccion)}</small></td>
+    <td class="td-items">${items}</td>
+    <td class="right nowrap">${money(p.total)}</td>
+    <td class="nowrap"><span class="pago-pill ${pagoClase(p.metodo_pago)}">${escapeHtml(p.metodo_pago)}</span>${p.pago_efectivo_detalle ? "<br><small class='muted'>" + escapeHtml(p.pago_efectivo_detalle) + vueltoSufijo(p) + "</small>" : ""}
+      <br><button class="btn sm r-pagado ${p.pagado ? "pagado-si" : "pagado-no"}" ${p.anulado ? "disabled" : ""} title="${p.pagado ? "Marcar como NO pagado" : "Marcar como pagado"}">${p.pagado ? "✔ Pagado" : "$ Sin pagar"}</button></td>
+    <td>${repartidorSelectHtml(p)}</td>
+    <td class="nowrap td-estado">${badges}${salida}
+      <label class="fact-check"><input type="checkbox" class="r-fac" ${p.facturado ? "checked" : ""} ${p.anulado ? "disabled" : ""} /> Fact.</label></td>
+    <td><input class="inline r-not" value="${escapeAttr(p.notas)}" ${p.anulado ? "disabled" : ""} /></td>
+    <td class="nowrap">
+      ${p.anulado ? "" : `<button class="btn ghost sm r-ticket" title="Ticket para el repartidor" aria-label="Ticket para el repartidor">🖼</button>`}
+      <button class="btn ghost sm r-edit" title="Editar" aria-label="Editar">✎</button>
+      ${p.anulado
+        ? `<button class="btn secondary sm r-rest">Restaurar</button> <button class="btn danger sm r-borrar" title="Borrar definitivamente" aria-label="Borrar definitivamente">🗑</button>`
+        : `<button class="btn ghost sm r-anular" title="Anular" aria-label="Anular">✕</button>`}
+    </td>`;
+
+  // inline handlers
+  tr.querySelector(".r-rep")?.addEventListener("change", (e) => patch(p.id, { repartidor: e.target.value }));
+  // Guarda en "blur", no en "change": un <input type="time"> dispara "change"
+  // apenas queda completa cada parte de la hora, y como patch() reemplaza la
+  // fila entera, eso movía el cursor a mitad de la edición. Al salir del campo
+  // se manda una sola vez, y sólo si el valor cambió (así hacer foco y salir
+  // sin tocar nada no dispara un PATCH ni redibuja la fila).
+  tr.querySelector(".r-sal")?.addEventListener("blur", (e) => {
+    if (e.target.value === hs) return;
+    patch(p.id, { hora_salida: e.target.value ? `${state.fecha}T${e.target.value}:00` : null });
+  });
+  tr.querySelector(".r-salio")?.addEventListener("click", () => {
+    patch(p.id, { hora_salida: `${state.fecha}T${hhmmAhora()}:00` });
+  });
+  tr.querySelector(".r-des-salio")?.addEventListener("click", () => patch(p.id, { hora_salida: null }));
+  // El botón de las reservas es un toggle: marcar y desmarcar con el mismo clic.
+  tr.querySelector(".r-reservado")?.addEventListener("click", () => {
+    patch(p.id, { hora_salida: p.hora_salida ? null : `${state.fecha}T${hhmmAhora()}:00` });
+  });
+  tr.querySelector(".r-pagado")?.addEventListener("click", () => patch(p.id, { pagado: !p.pagado }));
+  tr.querySelector(".r-fac")?.addEventListener("change", (e) => patch(p.id, { facturado: e.target.checked }));
+  tr.querySelector(".r-not")?.addEventListener("change", (e) => patch(p.id, { notas: e.target.value }));
+  tr.querySelector(".r-ticket")?.addEventListener("click", () => openTicket(p));
+  tr.querySelector(".r-edit").addEventListener("click", () => editarPedido(p));
+  tr.querySelector(".r-anular")?.addEventListener("click", () => anular(p.id));
+  tr.querySelector(".r-rest")?.addEventListener("click", () => restaurar(p.id));
+  tr.querySelector(".r-borrar")?.addEventListener("click", () => borrarDefinitivo(p));
+  return tr;
+}
+
+// Reemplaza en la tabla (y en state) sólo el pedido tocado, sin recargar
+// todo el día: no hay flicker ni pérdida de foco en las demás filas.
+function actualizarPedidoEnTabla(actualizado) {
+  const i = state.pedidos.findIndex((p) => p.id === actualizado.id);
+  if (i >= 0) state.pedidos[i] = actualizado;
+  const tr = $("tabla-body").querySelector(`tr[data-id="${actualizado.id}"]`);
+  if (tr) {
+    if (pasaFiltro(actualizado)) {
+      // Si el control editado (ej. hora de salida) tenía el foco, reemplazar
+      // la fila lo pierde: un <input type="time"> dispara "change" apenas el
+      // valor queda completo, sin que el usuario haya salido del campo, así
+      // que perder el foco ahí corta la edición a mitad de camino. Se
+      // restaura en el control equivalente de la fila nueva.
+      const activo = document.activeElement;
+      const clase = tr.contains(activo)
+        ? [...activo.classList].find((c) => c.startsWith("r-"))
+        : null;
+      const nueva = renderRow(actualizado);
+      tr.replaceWith(nueva);
+      if (clase) nueva.querySelector("." + clase)?.focus();
+    } else {
+      tr.remove(); // ej: filtro "pendientes" y el pedido dejó de estarlo
+    }
+  }
+  loadResumen(); // los totales del día pueden haber cambiado
+}
+
+async function patch(id, body) {
+  try {
+    const actualizado = await api(`/api/pedidos/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    actualizarPedidoEnTabla(actualizado);
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+async function anular(id) {
+  if (!confirm("¿Anular este pedido? Queda visible pero no suma a los totales.")) return;
+  try {
+    actualizarPedidoEnTabla(await api(`/api/pedidos/${id}/anular`, { method: "POST" }));
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+async function restaurar(id) {
+  try {
+    actualizarPedidoEnTabla(await api(`/api/pedidos/${id}/restaurar`, { method: "POST" }));
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+async function borrarDefinitivo(p) {
+  if (!confirm(`¿Borrar definitivamente el pedido ${p.numero != null ? "N° " + p.numero : "#" + p.id}? Esta acción no se puede deshacer.`)) return;
+  try {
+    await api(`/api/pedidos/${p.id}`, { method: "DELETE" });
+    state.pedidos = state.pedidos.filter((x) => x.id !== p.id);
+    $("tabla-body").querySelector(`tr[data-id="${p.id}"]`)?.remove();
+    loadResumen();
+  } catch (e) { toast("Error: " + e.message, "error"); }
+}
+
+function editarPedido(p) {
+  state.editId = p.id;
+  state.items = p.items.map((i) => {
+    const item = {
+      plato_id: i.plato_id, nombre: i.nombre,
+      precio_unitario: i.precio_unitario, cantidad: i.cantidad,
+      es_pdd: i.plato_id == null,
+    };
+    // El pedido guardado no trae los dos precios del plato del día (sólo el
+    // unitario cobrado), así que reapplyPrices() no podría reajustarlo al
+    // cambiar el método de pago. Los recuperamos del plato del día cargado
+    // buscándolo por nombre. Si no coincide (nombre escrito a mano, o pedido
+    // de otra fecha) queda sin los dos precios y no se toca al cambiar el
+    // método, igual que hasta ahora.
+    if (item.es_pdd) {
+      const pdd = pddPorNombre(item.nombre);
+      if (pdd) {
+        item.precio_efectivo = pdd.precio_efectivo;
+        item.precio_lista = pdd.precio_lista;
+      }
+    }
+    return item;
+  });
+  $("f-fecha").value = p.fecha;
+  $("f-tipo").value = p.tipo;
+  $("f-cliente").value = p.cliente_nombre;
+  $("f-direccion").value = p.cliente_direccion;
+  $("f-telefono").value = p.cliente_telefono || "";
+  $("f-indicaciones").value = p.indicaciones;
+  $("f-pago").value = p.metodo_pago;
+  $("f-vuelto").value = p.pago_efectivo_detalle;
+  fillRepartidorSelect($("f-repartidor"), p.repartidor);
+  $("f-hora-programada").value = hhmm(p.hora_salida_programada);
+  $("f-envio").value = p.costo_envio;
+  $("f-no-envio").checked = p.no_cobrar_envio;
+  $("f-desc-tipo").value = p.descuento_tipo || "";
+  $("f-desc-valor").value = p.descuento_valor;
+  $("f-notas").value = p.notas;
+  $("form-title").textContent = "✎ Editar pedido N° " + (p.numero ?? p.id);
+  $("btn-guardar").textContent = "Guardar cambios";
+  renderItems(); toggleEnvio(); toggleVuelto();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// ------------------------------------------------- ticket para el repartidor
+let _ticketPedido = null;
+let _ticketLote = null;   // en modo lote: array de pedidos completos de un repartidor
+let _ticketSubtitulo = ""; // repartidor/etiqueta que titula el lote
+
+function telefonoWa(tel) {
+  // Normaliza a formato wa.me: solo dígitos, con 549 (celular AR) adelante.
+  let d = (tel || "").replace(/\D/g, "").replace(/^0+/, "");
+  if (!d) return "";
+  if (!d.startsWith("54")) d = "549" + d;
+  return d;
+}
+
+function wrapText(ctx, texto, maxWidth) {
+  const lineas = [];
+  let linea = "";
+  const cortar = (palabra) => {
+    // Palabra sola más ancha que el renglón (una dirección sin espacios, un
+    // nombre larguísimo): se parte por letra para que no se salga del canvas.
+    let trozo = "";
+    for (const ch of palabra) {
+      if (trozo && ctx.measureText(trozo + ch).width > maxWidth) {
+        lineas.push(trozo);
+        trozo = ch;
+      } else trozo += ch;
+    }
+    return trozo;
+  };
+  for (const p of texto.split(/\s+/).filter(Boolean)) {
+    const prueba = linea ? linea + " " + p : p;
+    if (ctx.measureText(prueba).width > maxWidth && linea) {
+      lineas.push(linea);
+      linea = p;
+    } else linea = prueba;
+    if (ctx.measureText(linea).width > maxWidth) linea = cortar(linea);
+  }
+  if (linea) lineas.push(linea);
+  return lineas;
+}
+
+// --- Layout de los tickets --------------------------------------------------
+// Los dos tickets se arman igual: primero se mide todo contra un canvas
+// offscreen y se guarda cada operación de dibujo con su posición final, y
+// recién después se dibuja el modelo. Así el alto del canvas sale de las mismas
+// cuentas que el dibujo y no puede quedar desincronizado (antes eran dos
+// fórmulas paralelas, y el resultado era espacio de más abajo y texto cortado).
+
+function fuente(peso, size) {
+  return { font: `${peso ? peso + " " : ""}${size}px Arial, sans-serif`, size };
+}
+
+// El tamaño más grande de `tamanos` con el que `texto` entra en `maxWidth`
+// (o el más chico, si ninguno entra).
+function fitFont(ctx, texto, maxWidth, peso, tamanos) {
+  for (const size of tamanos) {
+    const f = fuente(peso, size);
+    ctx.font = f.font;
+    if (ctx.measureText(texto).width <= maxWidth) return f;
+  }
+  return fuente(peso, tamanos[tamanos.length - 1]);
+}
+
+// Acumulador de operaciones + alto. `linea()` apoya el texto en su línea de
+// base y avanza el cursor con margen suficiente para las colas (j, g, $).
+function nuevoLayout(yInicial) {
+  const ops = [];
+  return {
+    ops,
+    y: yInicial,
+    linea(texto, ff, color, align, x) {
+      ops.push({ texto, font: ff.font, color, align, x, y: this.y + ff.size });
+      this.y += Math.round(ff.size * 1.25);
+      return ops[ops.length - 1];
+    },
+    separador(x1, x2) {
+      ops.push({ sep: true, x1, x2, y: this.y });
+    },
+    espacio(px) { this.y += px; },
+  };
+}
+
+function pintarLayout(cv, ops, W, H, S) {
+  // El tamaño en pantalla lo resuelve el CSS (.ticket-canvas-wrap canvas), que
+  // limita ancho y alto manteniendo la proporción. Acá solo va el bitmap real.
+  cv.width = W * S; cv.height = H * S;
+  const ctx = cv.getContext("2d");
+  ctx.scale(S, S);
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#111"; ctx.lineWidth = 6; ctx.strokeRect(3, 3, W - 6, H - 6);
+  for (const o of ops) {
+    if (o.sep) {
+      ctx.strokeStyle = "#bbb"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(o.x1, o.y); ctx.lineTo(o.x2, o.y); ctx.stroke();
+      continue;
+    }
+    ctx.font = o.font; ctx.fillStyle = o.color; ctx.textAlign = o.align;
+    ctx.fillText(o.texto, o.x, o.y);
+  }
+}
+
+function drawTicket(p) {
+  const W = 640, S = 2, M = 50;   // ancho lógico, escala 2x para nitidez, margen
+  const ANCHO = W - 2 * M;
+  const mc = document.createElement("canvas").getContext("2d");
+  const L = nuevoLayout(30);
+
+  // Número gigante (se achica si es de muchos dígitos).
+  const numero = p.numero != null ? String(p.numero) : "—";
+  L.linea(numero, fitFont(mc, numero, ANCHO, "900", [240, 200, 160, 120]), "#111", "center", W / 2);
+
+  L.espacio(30);
+  L.separador(M, W - M);
+  L.espacio(30);
+
+  const linea1 = [p.cliente_nombre, p.cliente_direccion].filter(Boolean).join(" - ") || "(sin datos)";
+  const ffL1 = fuente("bold", 36);
+  mc.font = ffL1.font;
+  for (const l of wrapText(mc, linea1, ANCHO)) L.linea(l, ffL1, "#111", "center", W / 2);
+
+  if (p.indicaciones) {
+    const ffInd = fuente("", 28);
+    mc.font = ffInd.font;
+    for (const l of wrapText(mc, p.indicaciones, ANCHO)) L.linea(l, ffInd, "#555", "center", W / 2);
+  }
+
+  L.espacio(26);
+  L.separador(M, W - M);
+  L.espacio(34);
+
+  // Línea de cobro. El vuelto calculado es solo para uso interno (formulario
+  // y tabla de pedidos): no se imprime acá, solo el total y con cuánto paga.
+  if (p.metodo_pago === "Efectivo") {
+    const cobro = `Cobrar: ${money(p.total)}`;
+    L.linea(cobro, fitFont(mc, cobro, ANCHO, "900", [52, 46, 40, 34]), "#b3261e", "center", W / 2);
+    const pagaCon = _pagaConTexto(p);
+    if (pagaCon) {
+      const t = `Paga con: ${pagaCon}`;
+      L.espacio(10);
+      L.linea(t, fitFont(mc, t, ANCHO, "bold", [38, 34, 30, 26]), "#111", "center", W / 2);
+    }
+  } else {
+    L.linea("PAGO ✔", fuente("900", 56), "#1f8a4c", "center", W / 2);
+    L.espacio(6);
+    const ffM = fitFont(mc, p.metodo_pago, ANCHO, "", [30, 26, 22]);
+    L.linea(p.metodo_pago, ffM, "#555", "center", W / 2);
+  }
+
+  // Alto mínimo para que un ticket corto no quede como una tarjetita.
+  pintarLayout($("ticket-canvas"), L.ops, W, Math.max(800, Math.round(L.y + 40)), S);
+}
+
+// Dirección tal como se le manda a Google Maps: sin la unidad pegada al final
+// ("Lavalle 1268 7mo" → "Lavalle 1268", si no Google reinterpreta la altura) y
+// con la ciudad configurada, que es lo que evita que una calle a secas caiga en
+// otra localidad. Espejo de `direccion_para_maps` en app/routing.py — si se
+// cambia el criterio acá, cambiarlo allá también (y al revés).
+function direccionParaMaps(direccion) {
+  let limpia = (direccion || "").split(/\s+/).filter(Boolean).join(" ");
+  if (!limpia) return "";
+  const m = limpia.match(/^(.*?\d{1,5})\s+(?:[0-9]{1,3}[a-z]{1,2}|[a-z]{1,2}[0-9]{1,3})$/i);
+  if (m) limpia = m[1].trim();
+  const ciudad = ((_cfgCache && _cfgCache.ciudad_default) || "").split(/\s+/).filter(Boolean).join(" ");
+  if (ciudad && !limpia.toLowerCase().includes(ciudad.toLowerCase())) limpia = `${limpia}, ${ciudad}`;
+  return limpia;
+}
+
+function googleMapsSearchLink(direccion) {
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(direccionParaMaps(direccion));
+}
+
+// Ruta multi-parada en el orden recibido. Espejo de `google_maps_route_link` en
+// app/routing.py: se arma acá también porque el orden lo puede cambiar el
+// usuario a mano después de que la API devolvió el suyo.
+function googleMapsRouteLink(direccionesEnOrden, origenAnterior = null, volverAlOrigen = false) {
+  const paradas = (direccionesEnOrden || []).map(direccionParaMaps).filter(Boolean);
+  if (!paradas.length) return "";
+  const origen = direccionParaMaps(origenAnterior || ((_cfgCache && _cfgCache.direccion_local) || ""));
+  const destino = volverAlOrigen && origen ? origen : paradas[paradas.length - 1];
+  const intermedias = volverAlOrigen && origen ? paradas : paradas.slice(0, -1);
+  let url = "https://www.google.com/maps/dir/?api=1&destination="
+    + encodeURIComponent(destino) + "&travelmode=driving";
+  if (origen) url += "&origin=" + encodeURIComponent(origen);
+  if (intermedias.length) {
+    url += "&waypoints=" + intermedias.map(encodeURIComponent).join("|");
+  }
+  return url;
+}
+
+function openTicket(p) {
+  _ticketPedido = p;
+  _ticketLote = null;
+  $("ticket-title").textContent = `Ticket pedido ${p.numero != null ? "N° " + p.numero : "#" + p.id}`;
+  drawTicket(p);
+  const conTel = !!(p.cliente_telefono || "").trim();
+  const conNombre = !!(p.cliente_nombre || "").trim();
+  const conDireccionTexto = !!(p.cliente_direccion || "").trim();
+  $("ticket-contacto").style.display = conTel || conNombre || conDireccionTexto ? "" : "none";
+  $("ticket-wa").style.display = conTel ? "" : "none";
+  if (conTel) $("ticket-wa").href = "https://wa.me/" + telefonoWa(p.cliente_telefono);
+  const conDireccion = !!(p.cliente_direccion || "").trim();
+  $("ticket-maps").style.display = conDireccion ? "" : "none";
+  if (conDireccion) $("ticket-maps").href = googleMapsSearchLink(p.cliente_direccion);
+  // A la vista qué se le manda exactamente a Maps: si la altura o la ciudad
+  // salieran mal, se ve acá antes de que el repartidor salga.
+  $("ticket-maps-query").textContent = conDireccion
+    ? "Maps busca: " + direccionParaMaps(p.cliente_direccion)
+    : "";
+  const conRepartidor = p.tipo === "Envío" && !!(p.repartidor || "").trim();
+  $("ticket-ruta").style.display = conRepartidor ? "" : "none";
+  $("ticket-orden-wrap").style.display = "none";   // el orden es cosa del lote
+  $("ticket-ruta").textContent = "🗺️ Ruta optimizada";
+  $("ticket-maps").textContent = "🗺️ Ver dirección en Maps";
+  $("ticket-copiar").textContent = "📋 Copiar imagen";
+  $("ticket-contacto").textContent = "👤 Copiar contacto";
+  $("ticket-hint").textContent = "Copiá la imagen y pegala (Ctrl+V) en el chat de WhatsApp del repartidor. Con \"Copiar contacto\" le pegás también el teléfono del cliente.";
+  $("modal-ticket").classList.add("show");
+}
+
+function descargarTicket() {
+  const a = document.createElement("a");
+  if (_ticketLote) {
+    a.download = `repartidor-${(_ticketSubtitulo || "lote").replace(/[^a-z0-9]+/gi, "-")}.png`;
+  } else {
+    const p = _ticketPedido;
+    a.download = `pedido-${p && p.numero != null ? p.numero : (p ? p.id : "ticket")}.png`;
+  }
+  a.href = $("ticket-canvas").toDataURL("image/png");
+  a.click();
+}
+
+// ---- Ticket combinado: una imagen + un contacto con todos los pedidos que
+//      lleva un mismo repartidor. Reusa el modal #modal-ticket en modo lote.
+
+// Ajustes manuales durante la sesión. El orden confirmado al asignar una ruta
+// se guarda además en cada pedido y se recupera incluso al recargar la página.
+const _ordenLote = new Map();   // "fecha|subtítulo" -> [ids de pedido en orden]
+
+function _claveOrden(subtitulo) { return state.fecha + "|" + (subtitulo || ""); }
+
+function guardarOrdenLote(subtitulo, ids) {
+  _ordenLote.set(_claveOrden(subtitulo), ids);
+}
+
+// Aplica el orden guardado (si hay). Los pedidos que no estaban cuando se
+// ordenó —uno nuevo del mismo repartidor— quedan al final.
+function aplicarOrdenGuardado(pedidos, subtitulo) {
+  const ids = _ordenLote.get(_claveOrden(subtitulo));
+  if (!ids) return [...pedidos].sort(
+    (a, b) => (a.orden_ruta ?? 1e9) - (b.orden_ruta ?? 1e9)
+  );
+  const pos = new Map(ids.map((id, i) => [id, i]));
+  return [...pedidos].sort(
+    (a, b) => (pos.has(a.id) ? pos.get(a.id) : 1e9) - (pos.has(b.id) ? pos.get(b.id) : 1e9)
+  );
+}
+
+// "Paga con" legible desde el detalle de efectivo (texto libre con dígitos).
+function _pagaConTexto(p) {
+  if (!p.pago_efectivo_detalle) return "";
+  const digits = p.pago_efectivo_detalle.replace(/\D/g, "");
+  return digits ? money(parseInt(digits, 10)) : p.pago_efectivo_detalle;
+}
+
+function drawTicketLote(pedidos, subtitulo) {
+  const W = 640, S = 2, M = 40;   // ancho lógico, escala 2x, margen
+  const ANCHO = W - 2 * M;        // ancho útil real (el wrap medía contra otro)
+  const GAP = 18;                 // separación mínima entre el N° y el cobro
+  const mc = document.createElement("canvas").getContext("2d");
+  const L = nuevoLayout(M);
+
+  // --- Encabezado -----------------------------------------------------------
+  const titulo = "🛵 " + (subtitulo || "Repartidor");
+  const ffTit = fitFont(mc, titulo, ANCHO, "900", [40, 36, 32, 28, 24]);
+  for (const l of wrapText(mc, titulo, ANCHO)) L.linea(l, ffTit, "#111", "center", W / 2);
+
+  L.linea(fmtFecha(state.fecha), fuente("", 24), "#555", "center", W / 2);
+
+  const efectivoTotal = pedidos
+    .filter((p) => p.metodo_pago === "Efectivo")
+    .reduce((s, p) => s + (p.total || 0), 0);
+  const resumen = `${pedidos.length} pedido${pedidos.length === 1 ? "" : "s"}`
+    + (efectivoTotal > 0 ? ` · Efectivo a cobrar: ${money(efectivoTotal)}` : "");
+  L.linea(resumen, fitFont(mc, resumen, ANCHO, "bold", [26, 24, 22, 20]), "#111", "center", W / 2);
+
+  // --- Un bloque por pedido, en orden de entrega ----------------------------
+  // El número de parada va adelante del N° de pedido: el repartidor los tiene
+  // que entregar en ese orden, y es el orden que el usuario acomodó a mano.
+  pedidos.forEach((p, i) => {
+    L.espacio(20);
+    L.separador(M, W - M);
+    L.espacio(14);
+
+    const num = `${i + 1})  ` + (p.numero != null ? "N° " + p.numero : "#" + p.id);
+    const ffNum = fuente("900", 34);
+    mc.font = ffNum.font;
+    const anchoNum = mc.measureText(num).width;
+
+    const esEfectivo = p.metodo_pago === "Efectivo";
+    const pagaCon = esEfectivo ? _pagaConTexto(p) : "";
+    const cobro = esEfectivo
+      ? `Cobrar ${money(p.total)}${pagaCon ? " · paga " + pagaCon : ""}`
+      : `PAGO ✔ ${p.metodo_pago}`;
+    const colorCobro = esEfectivo ? "#b3261e" : "#1f8a4c";
+
+    // El cobro va a la derecha, en la misma fila del N°, achicando la fuente lo
+    // necesario. Si ni al tamaño mínimo entra al lado del número, baja a su
+    // propia fila: antes se dibujaba igual y terminaba tapando el N°.
+    const disponible = ANCHO - anchoNum - GAP;
+    const ffCobro = fitFont(mc, cobro, disponible, "900", [30, 28, 26, 24, 22]);
+    const entraAlLado = mc.measureText(cobro).width <= disponible;
+
+    const filaNum = L.linea(num, ffNum, "#111", "left", M);
+    if (entraAlLado) {
+      L.ops.push({
+        texto: cobro, font: ffCobro.font, color: colorCobro,
+        align: "right", x: W - M, y: filaNum.y,
+      });
+    } else {
+      L.linea(cobro, fitFont(mc, cobro, ANCHO, "900", [30, 28, 26, 24, 22]),
+              colorCobro, "right", W - M);
+    }
+
+    const l1 = [p.cliente_nombre, p.cliente_direccion].filter(Boolean).join(" - ") || "(sin datos)";
+    const ffL1 = fuente("bold", 34);
+    mc.font = ffL1.font;
+    for (const l of wrapText(mc, l1, ANCHO)) L.linea(l, ffL1, "#111", "left", M);
+
+    if (p.indicaciones) {
+      const ffInd = fuente("", 26);
+      mc.font = ffInd.font;
+      for (const l of wrapText(mc, p.indicaciones, ANCHO)) L.linea(l, ffInd, "#555", "left", M);
+    }
+    L.espacio(10);
+  });
+
+  pintarLayout($("ticket-canvas"), L.ops, W, Math.round(L.y + M), S);
+}
+
+function contactoLote(pedidos, subtitulo) {
+  const cab = `🛵 ${subtitulo || "Repartidor"} — ${fmtFecha(state.fecha)} — ${pedidos.length} pedido${pedidos.length === 1 ? "" : "s"}`;
+  const bloques = pedidos.map((p, i) => {
+    const cobro = p.metodo_pago === "Efectivo"
+      ? `Cobrar ${money(p.total)}${_pagaConTexto(p) ? " (paga con " + _pagaConTexto(p) + ")" : ""}`
+      : `Pagado (${p.metodo_pago})`;
+    return [
+      `${i + 1}) ${p.numero != null ? "N° " + p.numero : "#" + p.id} — ${p.cliente_nombre || "(sin nombre)"}`,
+      p.cliente_telefono ? "Tel: " + p.cliente_telefono : "",
+      p.cliente_direccion || "",
+      p.indicaciones ? "(" + p.indicaciones + ")" : "",
+      p.cliente_direccion ? googleMapsSearchLink(p.cliente_direccion) : "",
+      cobro,
+    ].filter(Boolean).join("\n");
+  });
+  const ruta = pedidos.length > 1
+    ? googleMapsRouteLink(pedidos.map((p) => p.cliente_direccion), null, true) : "";
+  return cab + "\n\n" + bloques.join("\n————————\n")
+    + (ruta ? "\n\n🗺️ Ruta completa (orden de entrega):\n" + ruta : "");
+}
+
+function openTicketLote(pedidos, titulo) {
+  if (!pedidos || !pedidos.length) { toast("Ese repartidor no tiene pedidos para el ticket.", "info"); return; }
+  _ticketPedido = null;
+  _ticketLote = aplicarOrdenGuardado(pedidos, titulo);
+  _ticketSubtitulo = titulo;
+  $("ticket-title").textContent = "Ticket — " + titulo;
+  // Botones: en lote no aplican WhatsApp-cliente ni "Ruta optimizada" (son por
+  // pedido). El link de Maps se arma acá con el orden que tenga el lote en este
+  // momento, así sigue al orden manual igual que la imagen.
+  $("ticket-contacto").style.display = "";
+  $("ticket-contacto").textContent = "👤 Copiar contactos";
+  $("ticket-copiar").textContent = "📋 Copiar imagen";
+  $("ticket-wa").style.display = "none";
+  $("ticket-ruta").style.display = "none";
+  $("ticket-maps-query").textContent = "";
+  $("ticket-hint").textContent = pedidos.length > 1
+    ? "Copiá la imagen y pegala en el chat del repartidor. \"Copiar contactos\" copia teléfonos, direcciones y el enlace de la ruta completa en el mismo orden de entrega."
+    : "Copiá la imagen y pegala en el chat del repartidor. \"Copiar contactos\" copia el teléfono y la dirección del pedido.";
+  refrescarTicketLote();
+  $("modal-ticket").classList.add("show");
+}
+
+// Redibuja la imagen y rearma el link de Maps con el orden actual del lote.
+function pintarTicketLote() {
+  const pedidos = _ticketLote;
+  drawTicketLote(pedidos, _ticketSubtitulo);
+  const maps = $("ticket-maps");
+  const direcciones = pedidos.map((p) => (p.cliente_direccion || "").trim()).filter(Boolean);
+  const link = googleMapsRouteLink(direcciones, null, true);
+  maps.style.display = link ? "" : "none";
+  maps.href = link || "#";
+  maps.textContent = direcciones.length > 1 ? "🗺️ Ver ruta en Maps" : "🗺️ Ver dirección en Maps";
+}
+
+// Imagen + link + panel para reacomodar las paradas a mano.
+function refrescarTicketLote() {
+  const pedidos = _ticketLote;
+  pintarTicketLote();
+  // El panel de orden solo tiene sentido con más de una parada.
+  $("ticket-orden-wrap").style.display = pedidos.length > 1 ? "" : "none";
+  if (pedidos.length < 2) return;
+  renderListaOrden(
+    $("ticket-orden"),
+    pedidos,
+    (p) => `<strong>${p.numero != null ? "N° " + p.numero : "#" + p.id}</strong> `
+           + escapeHtml(p.cliente_nombre || "(sin nombre)")
+           + (p.cliente_direccion ? ` — ${escapeHtml(p.cliente_direccion)}` : ""),
+    () => {
+      guardarOrdenLote(_ticketSubtitulo, pedidos.map((p) => p.id));
+      pintarTicketLote();
+    },
+  );
+}
+
+$("ticket-cerrar").addEventListener("click", () => $("modal-ticket").classList.remove("show"));
+$("ticket-descargar").addEventListener("click", descargarTicket);
+
+$("ticket-copiar").addEventListener("click", async () => {
+  const btn = $("ticket-copiar");
+  try {
+    const blob = await new Promise((res) => $("ticket-canvas").toBlob(res, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    btn.textContent = "✅ ¡Copiada! Pegala en WhatsApp";
+  } catch (e) {
+    // Sin Clipboard API (navegador viejo / sin permiso): descargamos.
+    descargarTicket();
+    btn.textContent = "⬇ Se descargó (no se pudo copiar)";
+  }
+});
+
+$("ticket-contacto").addEventListener("click", async () => {
+  let texto;
+  if (_ticketLote) {
+    texto = contactoLote(_ticketLote, _ticketSubtitulo);
+  } else {
+    const p = _ticketPedido;
+    if (!p) return;
+    texto = [
+      p.cliente_nombre,
+      p.cliente_telefono ? "Tel: " + p.cliente_telefono : "",
+      p.cliente_direccion,
+      p.cliente_direccion ? googleMapsSearchLink(p.cliente_direccion) : "",
+    ].filter(Boolean).join("\n");
+  }
+  try {
+    await navigator.clipboard.writeText(texto);
+    $("ticket-contacto").textContent = _ticketLote ? "✅ Contactos copiados" : "✅ Contacto copiado";
+  } catch (e) {
+    toast("No se pudo copiar el contacto al portapapeles.", "error");
+  }
+});
+
+$("ticket-ruta").addEventListener("click", async () => {
+  const p = _ticketPedido;
+  if (!p || !p.repartidor) return;
+  const btn = $("ticket-ruta");
+  btn.textContent = "Calculando…";
+  try {
+    const r = await api(
+      `/api/rutas/repartidor?fecha=${state.fecha}&repartidor=${encodeURIComponent(p.repartidor)}`
+    );
+    if (r.aviso) toast(r.aviso, "info");
+    await navigator.clipboard.writeText(`Ruta Optimizada: ${r.maps_link}`);
+    btn.textContent = "✅ Ruta copiada";
+  } catch (e) {
+    toast(e.message, "error");
+    btn.textContent = "🗺️ Ruta optimizada";
+  }
+});
+
+// ---- Entrada general del ticket combinado (independiente del mapa) ---------
+// Agrupa los envíos pendientes de salir por repartidor asignado.
+function pedidosPendientesPorRepartidor() {
+  const map = new Map();
+  for (const p of state.pedidos) {
+    if (p.tipo !== "Envío" || p.anulado || p.hora_salida || esperandoHoraProgramada(p)) continue;
+    const rep = (p.repartidor || "").trim();
+    if (!rep) continue;
+    if (!map.has(rep)) map.set(rep, []);
+    map.get(rep).push(p);
+  }
+  return map;
+}
+
+$("btn-ticket-repartidor").addEventListener("click", () => {
+  const porRep = pedidosPendientesPorRepartidor();
+  if (porRep.size === 0) {
+    toast("No hay envíos pendientes con repartidor asignado. Asigná un repartidor primero.", "info");
+    return;
+  }
+  if (porRep.size === 1) {
+    const [rep, peds] = [...porRep][0];
+    openTicketLote(peds, "Repartidor " + rep);
+    return;
+  }
+  const cont = $("ticket-rep-list");
+  cont.innerHTML = "";
+  for (const [rep, peds] of porRep) {
+    const b = document.createElement("button");
+    b.className = "btn secondary";
+    b.style.cssText = "display:block;width:100%;text-align:left;margin:.35rem 0;";
+    b.textContent = `🛵 ${rep} — ${peds.length} pedido${peds.length === 1 ? "" : "s"}`;
+    b.addEventListener("click", () => {
+      $("modal-ticket-rep").classList.remove("show");
+      openTicketLote(peds, "Repartidor " + rep);
+    });
+    cont.appendChild(b);
+  }
+  $("modal-ticket-rep").classList.add("show");
+});
+$("ticket-rep-cancel").addEventListener("click", () => $("modal-ticket-rep").classList.remove("show"));
+
+// --------------------------------------------------------------- resumen
+const resumenDetails = $("resumen-details");
+resumenDetails.open = localStorage.getItem("resumenAbierto") === "1";
+resumenDetails.addEventListener("toggle", () => {
+  localStorage.setItem("resumenAbierto", resumenDetails.open ? "1" : "0");
+});
+
+async function loadResumen() {
+  const r = await api("/api/resumen?fecha=" + state.fecha);
+  const g = $("resumen");
+  $("resumen-collapsed-hint").textContent = `— ${money(r.total)} · ${r.cantidad} pedido${r.cantidad === 1 ? "" : "s"}`;
+  // Los puntitos de color de cada método repiten el color de las pills de la
+  // tabla, para conectar visualmente el resumen con los pedidos.
+  g.innerHTML = `
+    <div class="summary-grid">
+      <div class="stat stat-total"><div class="k">Total del día</div><div class="v">${money(r.total)}</div></div>
+      <div class="stat"><div class="k">Pedidos</div><div class="v">${r.cantidad}</div></div>
+      <div class="stat"><div class="k"><i class="dot dot-efectivo"></i>Efectivo</div><div class="v">${money(r.por_metodo.Efectivo)}</div></div>
+      <div class="stat"><div class="k"><i class="dot dot-transferencia"></i>Transferencia</div><div class="v">${money(r.por_metodo.Transferencia)}</div></div>
+      <div class="stat"><div class="k"><i class="dot dot-qr"></i>QR</div><div class="v">${money(r.por_metodo.QR)}</div></div>
+      <div class="stat"><div class="k"><i class="dot dot-posnet"></i>Posnet</div><div class="v">${money(r.por_metodo.Posnet)}</div></div>
+    </div>
+    <div class="summary-actions">
+      <button class="btn" id="btn-facturar">🧾 Facturar el día</button>
+      <button class="btn ok" id="btn-facturar-todo">✅ Marcar todo como facturado</button>
+      <button class="btn secondary" id="btn-export-dia">⬇ Hoja del día</button>
+      <span class="export-mes-wrap">
+        <input type="month" id="export-mes" class="inline" title="Mes a exportar" />
+        <button class="btn" id="btn-export">⬇ Excel del mes</button>
+      </span>
+    </div>`;
+  $("export-mes").value = state.fecha.slice(0, 7); // default: el mes del día visto
+  $("btn-export").addEventListener("click", exportar);
+  $("btn-export-dia").addEventListener("click", exportarDia);
+  $("btn-facturar").addEventListener("click", openFacturacion);
+  $("btn-facturar-todo").addEventListener("click", facturarTodo);
+}
+
+// Marca todos los pedidos válidos del día como facturados de una sola vez
+// (cierre del día al pasar la lista completa a facturación).
+async function facturarTodo() {
+  const pendientes = state.pedidos.filter((p) => !p.anulado && !p.facturado).length;
+  if (!pendientes) return toast("No hay pedidos pendientes de facturar en este día.", "info");
+  if (!confirm(`¿Marcar como facturados los ${pendientes} pedido(s) pendientes de este día?`)) return;
+  const btn = $("btn-facturar-todo");
+  btn.disabled = true; btn.textContent = "Marcando…";
+  try {
+    const r = await api("/api/pedidos/facturar-dia?fecha=" + state.fecha, { method: "POST" });
+    await loadDay();
+    toast(`Listo: ${r.facturados} pedido(s) marcados como facturados.`, "ok");
+  } catch (e) {
+    toast("Error: " + e.message, "error");
+    btn.disabled = false; btn.textContent = "✅ Marcar todo como facturado";
+  }
+}
+
+async function exportarDia() {
+  window.location = "/api/export/dia?fecha=" + state.fecha;
+}
+
+// ------------------------------------------------------ facturación del día
+async function openFacturacion() {
+  const r = await api("/api/facturacion?fecha=" + state.fecha);
+  $("fact-fecha").textContent = state.fecha === todayISO()
+    ? "Hoy — " + fmtFecha(state.fecha) : fmtFecha(state.fecha);
+  const cont = $("fact-cols");
+  if (!r.metodos.length) {
+    cont.innerHTML = `<p class="muted">No hay pedidos para facturar este día.</p>`;
+  } else {
+    cont.innerHTML = r.metodos.map((m) => {
+      const d = r.por_metodo[m];
+      const completo = d.pedidos > 0 && d.facturados === d.pedidos;
+      const filas = d.items.map((it) =>
+        `<li><b>${it.cantidad}</b> ${escapeHtml(it.nombre)}</li>`).join("");
+      const envios = d.envios > 0
+        ? `<li class="fact-envio"><b>${d.envios}</b> ${d.envios === 1 ? "envío" : "envíos"}</li>` : "";
+      return `
+        <div class="fact-col ${completo ? "fact-col-done" : ""}">
+          <div class="fact-head">${escapeHtml(m)}</div>
+          <ul class="fact-list">${filas}${envios}</ul>
+          <div class="fact-foot">
+            <span>${d.facturados}/${d.pedidos} facturado${d.pedidos === 1 ? "" : "s"}</span>
+            <span>${money(d.total)}</span>
+          </div>
+          <div class="fact-actions">
+            <button type="button" class="btn ${completo ? "secondary" : "ok"} sm fact-marcar" data-metodo="${escapeHtml(m)}" ${completo ? "disabled" : ""}>
+              ${completo ? "✅ Ya facturado" : "✅ Marcar facturado"}
+            </button>
+          </div>
+        </div>`;
+    }).join("");
+    cont.querySelectorAll(".fact-marcar").forEach((btn) => {
+      btn.addEventListener("click", () => facturarMetodo(btn.dataset.metodo));
+    });
+  }
+  $("modal-fact").classList.add("show");
+}
+$("fact-cerrar").addEventListener("click", () => $("modal-fact").classList.remove("show"));
+
+// Factura solo los pedidos de un método de pago (no se mezclan efectivo y
+// transferencia al pasar la lista al sistema de facturación).
+async function facturarMetodo(metodo) {
+  try {
+    const r = await api(
+      "/api/pedidos/facturar-dia?fecha=" + state.fecha + "&metodo_pago=" + encodeURIComponent(metodo),
+      { method: "POST" }
+    );
+    await loadDay();
+    await openFacturacion();
+    toast(`Listo: ${r.facturados} pedido(s) de ${metodo} marcados como facturados.`, "ok");
+  } catch (e) {
+    toast("Error: " + e.message, "error");
+  }
+}
+
+async function exportar() {
+  const btn = $("btn-export"); btn.disabled = true; btn.textContent = "Generando…";
+  try {
+    // input type=month da "YYYY-MM"; si el navegador no lo soporta y el
+    // valor no tiene esa forma, se cae al mes del día visto.
+    const mesValor = /^\d{4}-\d{2}$/.test($("export-mes")?.value || "")
+      ? $("export-mes").value : state.fecha.slice(0, 7);
+    const [y, m] = mesValor.split("-");
+    const res = await api(`/api/export?anio=${+y}&mes=${+m}`, { method: "POST" });
+    window.location = res.url;
+    btn.textContent = "⬇ Exportar Excel del mes";
+  } catch (e) { toast("Error al exportar: " + e.message, "error"); btn.textContent = "⬇ Exportar Excel del mes"; }
+  btn.disabled = false;
+}
+
+// -------------------------------------------------------------- pendientes
+async function loadPendientes() {
+  const p = await api("/api/pendientes");
+  const b = $("banner-pendientes");
+  const partes = [];
+  if (p.sin_facturar_anteriores > 0)
+    partes.push(`⚠ Hay <b>${p.sin_facturar_anteriores}</b> pedido(s) de días anteriores sin facturar (${p.fechas_anteriores.join(", ")}).`);
+  if (p.pedidos_futuros > 0)
+    partes.push(`📅 <b>${p.pedidos_futuros}</b> pedido(s) cargados para días futuros.`);
+  if (partes.length) { b.innerHTML = partes.join(" &nbsp; "); b.classList.add("show"); }
+  else b.classList.remove("show");
+}
+
+// ------------------------------------------------------------------ carta
+// Platos tildados para que el cambio de precio (aumentar/fijar) aplique sólo
+// a ellos. Se mantiene entre recargas de la tabla —editar o dar de baja un
+// plato la vuelven a renderizar— y se descartan los ids que ya no existen.
+let cartaSeleccion = new Set();
+
+// null = "todos" (comportamiento histórico); si no, los ids elegidos.
+const seleccionCarta = () => (cartaSeleccion.size ? [...cartaSeleccion] : null);
+// Frases del alcance, para que carteles y confirmaciones se lean normal (sin
+// "(s)"). Hay dos formas porque en español "de + el" se contrae en "del".
+const elegidosTexto = (n) => (n === 1 ? "el plato elegido" : `los ${n} elegidos`);
+const deElegidos = (n) => (n === 1 ? "del plato elegido" : `de los ${n} elegidos`);
+const alcanceDe = (ids) => (ids ? deElegidos(ids.length) : "de TODOS los platos");
+
+// Única fuente de verdad de la selección en pantalla: sincroniza tildes y
+// resaltado de cada fila desde cartaSeleccion, y refleja el alcance en los
+// textos de las acciones, así nunca queda dudando a qué se le va a aplicar
+// el cambio de precio.
+function renderCartaSeleccion() {
+  const n = cartaSeleccion.size;
+  const filas = $("carta-body").querySelectorAll("tr");
+  filas.forEach((tr) => {
+    const elegida = cartaSeleccion.has(+tr.dataset.platoId);
+    tr.classList.toggle("fila-elegida", elegida);
+    tr.querySelector(".c-sel").checked = elegida;
+  });
+  $("lbl-aumentar").textContent = n
+    ? `Aumentar ${elegidosTexto(n)} +$X (efectivo y lista)`
+    : "Aumentar todos +$X (efectivo y lista)";
+  $("lbl-set-efectivo").textContent = n
+    ? `Fijar el precio en efectivo ${deElegidos(n)} a $`
+    : "Fijar TODOS los precios en efectivo a $";
+  $("lbl-set-lista").textContent = n
+    ? `Fijar el precio de lista ${deElegidos(n)} a $`
+    : "Fijar TODOS los precios de lista a $";
+  $("carta-sel-banner").style.display = n ? "" : "none";
+  $("carta-sel-texto").textContent = n === 1
+    ? "1 plato elegido: los cambios de precio se aplican sólo a ese."
+    : `${n} platos elegidos: los cambios de precio se aplican sólo a esos.`;
+  const todos = $("carta-sel-todos");
+  todos.checked = filas.length > 0 && n === filas.length;
+  todos.indeterminate = n > 0 && n < filas.length;
+}
+
+async function loadCarta() {
+  const platos = await api("/api/platos?incluir_inactivos=true");
+  const vivos = new Set(platos.map((p) => p.id));
+  [...cartaSeleccion].forEach((id) => { if (!vivos.has(id)) cartaSeleccion.delete(id); });
+  const tb = $("carta-body");
+  tb.innerHTML = "";
+  platos.forEach((p) => {
+    const tr = document.createElement("tr");
+    tr.dataset.platoId = p.id;
+    tr.innerHTML = `
+      <td class="carta-sel-col"><input type="checkbox" class="c-sel" ${cartaSeleccion.has(p.id) ? "checked" : ""} title="Elegir este plato para el cambio de precio" /></td>
+      <td>${escapeHtml(p.nombre)}${p.es_plato_del_dia ? ' <span class="badge sf">especial</span>' : ""}</td>
+      <td>${escapeHtml(p.categoria)}</td>
+      <td class="right">${money(p.precio_efectivo)}</td>
+      <td class="right">${money(p.precio_lista)}</td>
+      <td>${p.activo ? "Sí" : "No"}</td>
+      <td class="nowrap">
+        <button class="btn ghost sm c-edit">✎</button>
+        ${p.activo
+          ? '<button class="btn ghost sm c-baja">Baja</button>'
+          : '<button class="btn danger sm c-borrar" title="Borrar definitivamente">🗑</button>'}
+      </td>`;
+    tr.querySelector(".c-sel").addEventListener("change", (e) => {
+      if (e.target.checked) cartaSeleccion.add(p.id);
+      else cartaSeleccion.delete(p.id);
+      renderCartaSeleccion();
+    });
+    tr.querySelector(".c-edit").addEventListener("click", () => openPlatoModal(p));
+    tr.querySelector(".c-baja")?.addEventListener("click", async () => {
+      if (confirm("¿Dar de baja este plato? Se oculta pero no se borra el historial.")) {
+        await api(`/api/platos/${p.id}`, { method: "DELETE" }); loadCarta();
+      }
+    });
+    tr.querySelector(".c-borrar")?.addEventListener("click", async () => {
+      if (confirm(`¿Borrar definitivamente "${p.nombre}"? Los pedidos que ya lo usaron no se ven afectados, pero esto no se puede deshacer.`)) {
+        await api(`/api/platos/${p.id}/definitivo`, { method: "DELETE" });
+        await loadCatalog(); loadCarta();
+      }
+    });
+    tb.appendChild(tr);
+  });
+  renderCartaSeleccion();
+}
+
+$("carta-sel-todos").addEventListener("change", (e) => {
+  cartaSeleccion.clear();
+  if (e.target.checked) {
+    $("carta-body").querySelectorAll("tr").forEach((tr) => cartaSeleccion.add(+tr.dataset.platoId));
+  }
+  renderCartaSeleccion();
+});
+$("carta-sel-limpiar").addEventListener("click", () => {
+  cartaSeleccion.clear();
+  renderCartaSeleccion();
+});
+
+$("btn-nuevo-plato").addEventListener("click", () => openPlatoModal(null));
+$("btn-aumentar").addEventListener("click", async () => {
+  const monto = +$("aumento-monto").value;
+  if (!monto) return toast("Ingresá el monto de aumento.", "error");
+  const ids = seleccionCarta();
+  if (!confirm(`¿Aumentar los precios (efectivo y lista) ${alcanceDe(ids)} en ${money(monto)}?`)) return;
+  const r = await api("/api/platos/aumentar", { method: "POST", body: JSON.stringify({ monto, ids }) });
+  $("aumento-monto").value = "";
+  await loadCatalog(); loadCarta();
+  toast(`Listo: ${r.actualizados} platos actualizados.`, "ok");
+});
+
+async function fijarPrecio(campo, inputId, etiqueta) {
+  const valor = +$(inputId).value;
+  if (!valor && valor !== 0) return toast("Ingresá el precio a fijar.", "error");
+  const ids = seleccionCarta();
+  if (!confirm(`¿Poner el precio ${etiqueta} ${alcanceDe(ids)} en ${money(valor)}?`)) return;
+  const r = await api("/api/platos/set-precios", { method: "POST", body: JSON.stringify({ [campo]: valor, ids }) });
+  $(inputId).value = "";
+  await loadCatalog(); loadCarta();
+  toast(`Listo: ${r.actualizados} platos con precio ${etiqueta} = ${money(valor)}.`, "ok");
+}
+$("btn-set-efectivo").addEventListener("click", () => fijarPrecio("precio_efectivo", "set-efectivo", "efectivo"));
+$("btn-set-lista").addEventListener("click", () => fijarPrecio("precio_lista", "set-lista", "de lista"));
+
+function openPlatoModal(p) {
+  $("modal-plato-title").textContent = p ? "Editar plato" : "Nuevo plato";
+  $("mp-id").value = p ? p.id : "";
+  $("mp-nombre").value = p ? p.nombre : "";
+  $("mp-categoria").value = p ? p.categoria : "";
+  $("mp-ef").value = p ? p.precio_efectivo : 0;
+  $("mp-li").value = p ? p.precio_lista : 0;
+  $("mp-activo").checked = p ? p.activo : true;
+  $("modal-plato").classList.add("show");
+}
+$("mp-cancel").addEventListener("click", () => $("modal-plato").classList.remove("show"));
+$("mp-save").addEventListener("click", async () => {
+  const id = $("mp-id").value;
+  const body = {
+    nombre: $("mp-nombre").value.trim(),
+    categoria: $("mp-categoria").value.trim(),
+    precio_efectivo: +$("mp-ef").value || 0,
+    precio_lista: +$("mp-li").value || 0,
+    activo: $("mp-activo").checked,
+  };
+  if (!body.nombre) return toast("El nombre es obligatorio.", "error");
+  if (id) await api(`/api/platos/${id}`, { method: "PUT", body: JSON.stringify(body) });
+  else await api("/api/platos", { method: "POST", body: JSON.stringify(body) });
+  $("modal-plato").classList.remove("show");
+  await loadCatalog(); loadCarta();
+});
+
+// ------------------------------------------------------------------ config
+async function loadConfig() {
+  _cfgCache = await api("/api/config");
+  $("c-nombre-local").value = _cfgCache.nombre_local || "";
+  $("c-demora").value = _cfgCache.minutos_demora_salida;
+  $("c-sinfact").value = _cfgCache.hora_alerta_sin_facturar;
+  $("c-limite").value = _cfgCache.hora_limite_pedidos;
+  $("c-envio").value = _cfgCache.costo_envio_default;
+  $("c-direccion-local").value = _cfgCache.direccion_local || "";
+  $("c-ciudad-default").value = _cfgCache.ciudad_default || "";
+}
+$("btn-guardar-config").addEventListener("click", async () => {
+  const body = {
+    nombre_local: $("c-nombre-local").value.trim(),
+    minutos_demora_salida: +$("c-demora").value,
+    hora_alerta_sin_facturar: $("c-sinfact").value.trim(),
+    hora_limite_pedidos: $("c-limite").value.trim(),
+    costo_envio_default: +$("c-envio").value,
+    direccion_local: $("c-direccion-local").value.trim(),
+    ciudad_default: $("c-ciudad-default").value.trim(),
+  };
+  _cfgCache = await api("/api/config", { method: "PUT", body: JSON.stringify(body) });
+  aplicarNombreLocal(_cfgCache.nombre_local);
+  $("config-ok").textContent = "✓ Guardado";
+  setTimeout(() => ($("config-ok").textContent = ""), 2000);
+});
+
+// ----------------------------------------------------- cierre de modales
+// Cada modal cierra por su botón existente (así se preservan los callbacks
+// encadenados, ej. repartidores → plato del día al arrancar).
+const MODAL_CERRAR = {
+  "modal-rep": "rep-cancel",
+  "modal-pdd": "pdd-cancel",
+  "modal-fact": "fact-cerrar",
+  "modal-ticket": "ticket-cerrar",
+  "modal-rutas": "rutas-cerrar",
+  "modal-mapa-pendientes": "mapa-pendientes-cerrar",
+  "modal-plato": "mp-cancel",
+  "modal-cliente": "mc-cancel",
+};
+// Sólo los modales sin campos editables cierran con click afuera (un click
+// accidental no puede hacer perder lo tipeado en los de formulario).
+const MODALES_SOLO_LECTURA = new Set(["modal-fact", "modal-ticket", "modal-rutas", "modal-mapa-pendientes"]);
+
+function cerrarModal(back) { $(MODAL_CERRAR[back.id])?.click(); }
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("ac-cliente").classList.contains("hidden")) return; // lo usa el autocompletado
+  const abierto = document.querySelector(".modal-back.show");
+  if (abierto) { e.preventDefault(); cerrarModal(abierto); }
+});
+// mousedown y no click: un drag que empieza dentro del modal y suelta afuera
+// dispararía click en el fondo y cerraría sin querer.
+document.querySelectorAll(".modal-back").forEach((back) =>
+  back.addEventListener("mousedown", (e) => {
+    if (e.target === back && MODALES_SOLO_LECTURA.has(back.id)) cerrarModal(back);
+  })
+);
+
+// -------------------------------------------------------------- utilidades
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
+
+// Clase CSS de color según el método de pago (efectivo verde, transferencia
+// azul, etc.), igual que en la planilla de referencia.
+function pagoClase(metodo) {
+  return {
+    "Efectivo": "pago-efectivo",
+    "Transferencia": "pago-transferencia",
+    "QR": "pago-qr",
+    "Posnet": "pago-posnet",
+  }[metodo] || "pago-otro";
+}
+
+// HH:MM (24h) desde un ISO "YYYY-MM-DDTHH:MM:SS". El input type=time exige
+// ese formato exacto; no sirve toLocaleTimeString (devuelve "09:15 a. m.").
+function hhmm(iso) { return iso ? String(iso).slice(11, 16) : ""; }
+
+// ------------------------------------------------------ nombre del local
+// Se pregunta una sola vez por instalación y se guarda en la config del
+// backend (no en localStorage): así lo usan tanto el título de la app como
+// los nombres de archivo/hoja de los Excel exportados, que se generan en el
+// servidor y no tienen acceso al localStorage del navegador.
+function aplicarNombreLocal(nombre) {
+  $("local-name").textContent = nombre ? nombre + " - " : "";
+}
+function pedirNombreLocalSiFalta() {
+  return new Promise((resolve) => {
+    if (_cfgCache.nombre_local) return resolve();
+    $("modal-local").classList.add("show");
+    setTimeout(() => $("input-nombre-local").focus(), 0);
+    const onSave = async () => {
+      const nombre = $("input-nombre-local").value.trim();
+      if (!nombre) return; // obligatorio: no cierra hasta tener un nombre
+      _cfgCache = await api("/api/config", { method: "PUT", body: JSON.stringify({ nombre_local: nombre }) });
+      aplicarNombreLocal(_cfgCache.nombre_local);
+      $("modal-local").classList.remove("show");
+      $("local-guardar").removeEventListener("click", onSave);
+      $("input-nombre-local").removeEventListener("keydown", onKey);
+      resolve();
+    };
+    const onKey = (e) => { if (e.key === "Enter") onSave(); };
+    $("local-guardar").addEventListener("click", onSave);
+    $("input-nombre-local").addEventListener("keydown", onKey);
+  });
+}
+
+// ------------------------------------------------------------------- init
+(async function init() {
+  await getConfigCached();
+  aplicarNombreLocal(_cfgCache.nombre_local);
+  await pedirNombreLocalSiFalta();
+  await loadCatalog();
+  $("f-envio").value = _cfgCache.costo_envio_default;
+  resetForm();
+  await loadDay();
+  await loadPendientes();
+  // Al iniciar el día (si es hoy): preguntar los repartidores y el plato del
+  // día que todavía no se hayan cargado, uno después del otro.
+  if (state.fecha === todayISO()) {
+    const necesitaRep = state.repartidoresDia.length === 0;
+    const necesitaPdd = !state.platoDia.definido;
+    if (necesitaRep) {
+      onRepModalClosed = necesitaPdd ? openPddModal : null;
+      openRepModal();
+    } else if (necesitaPdd) {
+      openPddModal();
+    }
+  }
+  // Auto-refresco de alertas cada minuto (recalcula demoras/sin facturar).
+  // Se saltea si el usuario está en el medio de algo, para no pisar lo que
+  // está tipeando ni cerrar un modal abierto.
+  setInterval(() => { if (!estaOcupado()) loadDay(); }, 60000);
+  // Versión de la app en el header (no bloquea el arranque si falla).
+  api("/api/version").then((r) => {
+    if (r.version) $("app-version").textContent = "v" + r.version;
+  }).catch(() => {});
+})();
+
+// El refresco automático no debe interrumpir al usuario: hay un modal abierto,
+// o el foco está dentro de la tabla (edición inline) o del formulario de carga.
+function estaOcupado() {
+  if (document.querySelector(".modal-back.show")) return true;
+  const el = document.activeElement;
+  if (el && typeof el.closest === "function" && el.closest("#tabla, #pedido-form")) return true;
+  return false;
+}

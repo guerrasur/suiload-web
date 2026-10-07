@@ -1,0 +1,18 @@
+# Base de datos y respaldos locales
+data/*.db
+backups/
+exports/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Actualizador (launcher nuevo pendiente de aplicar) y acceso directo generado
+*.bat.new
+*.lnk
+
+# Sistema
+.DS_Store
