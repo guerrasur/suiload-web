@@ -603,7 +603,19 @@ function toggleVuelto() {
   $("wrap-vuelto").style.display = $("f-pago").value === "Efectivo" ? "" : "none";
   $("f-pago").className = "select-pago " + pagoClase($("f-pago").value);
 }
-$("f-tipo").addEventListener("change", () => { toggleEnvio(); checkHoraLimite(); });
+$("f-tipo").addEventListener("change", async () => {
+  const tipo = $("f-tipo").value;
+  // Recordar la elección explícita; abrir o cancelar una edición no la cambia.
+  if (_cfgCache) _cfgCache.tipo_pedido_default = tipo;
+  toggleEnvio(); checkHoraLimite();
+  try {
+    await api("/api/config", {
+      method: "PUT", body: JSON.stringify({ tipo_pedido_default: tipo }),
+    });
+  } catch (err) {
+    toast("No se pudo recordar el tipo de pedido: " + err.message, "error");
+  }
+});
 
 async function checkHoraLimite() {
   const b = $("banner-hora");

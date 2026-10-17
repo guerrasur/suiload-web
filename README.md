@@ -72,3 +72,6 @@ Los recursos usan URLs versionadas y Hosting revalida el contenido. Cada release
 debe actualizar VERSION, web/version.js, web/version.json, /api/version y
 las URLs de JS/CSS de web/index.html. Publicar en Firebase sigue siendo un
 paso separado: el actualizador detecta las versiones ya desplegadas.
+
+Desde v1.0.2, elegir Reserva o Envío en el formulario guarda automáticamente ese
+tipo como predeterminado para los próximos pedidos y al volver a abrir la web.

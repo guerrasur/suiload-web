@@ -80,7 +80,7 @@
     const parts=path.split("/").filter(Boolean).slice(1), [domain,id,action,subid,subaction]=parts;
     const fecha=q.get("fecha")||today();const next=()=>++s.seq;
     const day=()=>s.pedidos.filter(p=>p.fecha===fecha&&!p.anulado);
-    if(domain==="version")return {version:"1.0.1 web"};
+    if(domain==="version")return {version:"1.0.2 web"};
     if(domain==="config") {
       if(method==="PUT") {
         const cfg={...s.config,...b};
