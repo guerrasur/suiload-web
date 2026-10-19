@@ -1761,10 +1761,25 @@ function repartidorSelectHtml(p) {
   return `<select class="inline r-rep" ${p.anulado ? "disabled" : ""}>${opts}</select>`;
 }
 
+function ordenPorEstado(a, b) {
+  const terminado = p => p?.modo === "comanda" ? !!p.completado : !!p?.hora_salida;
+  return Number(terminado(a)) - Number(terminado(b))
+    || (a?.hora_pedido || "").localeCompare(b?.hora_pedido || "")
+    || (a?.id || 0) - (b?.id || 0);
+}
+function reordenarTablaTerminados() {
+  const body = $("tabla-body"), rows = [...body.children];
+  const orders = new Map(state.pedidos.map(p => [p.id, p]));
+  const sorted = [...rows].sort((a,b) => ordenPorEstado(orders.get(+a.dataset.id), orders.get(+b.dataset.id)));
+  if(sorted.every((row,index) => row === rows[index]))return;
+  const focused = body.contains(document.activeElement) ? document.activeElement : null;
+  sorted.forEach(row => body.appendChild(row));
+  focused?.focus({preventScroll:true});
+}
 function renderTabla() {
   const tb = $("tabla-body");
   tb.innerHTML = "";
-  state.pedidos.filter(pasaFiltro).forEach((p) => tb.appendChild(renderRow(p)));
+  state.pedidos.filter(pasaFiltro).sort(ordenPorEstado).forEach((p) => tb.appendChild(renderRow(p)));
 }
 
 function hhmmAhora() {
@@ -1881,6 +1896,7 @@ function actualizarPedidoEnTabla(actualizado) {
       tr.remove(); // ej: filtro "pendientes" y el pedido dejó de estarlo
     }
   }
+  reordenarTablaTerminados();
   window.SuiloadComandas?.refresh().catch(e => toast(e.message, "error"));
   window.SuiloadWorkspace.renderDayTotals();
   loadResumen(); // los totales del día pueden haber cambiado
@@ -2845,6 +2861,7 @@ const MODAL_CERRAR = {
   "modal-mapa-pendientes": "mapa-pendientes-cerrar",
   "modal-plato": "mp-cancel",
   "modal-cliente": "mc-cancel",
+  "modal-co-item": "co-item-cancel",
 };
 // Sólo los modales sin campos editables cierran con click afuera (un click
 // accidental no puede hacer perder lo tipeado en los de formulario).

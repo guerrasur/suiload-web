@@ -184,3 +184,32 @@ en negrita, y conserva la edición y el bloqueo del texto.
 En **web v1.1.3**, el resumen del día y Exportar Excel del día quedan al final
 de la página, con desplazamiento normal. Sólo el total del pedido en curso y
 Guardar permanecen anclados al pie de la pantalla.
+
+## Carga de ítems y orden de pedidos (web v1.1.4)
+
+Las comandas completadas se agrupan al final de la lista; los cobros pendientes
+siguen visibles y se pueden marcar pagados allí. Al deshacer Completado, la
+comanda vuelve al grupo de pedidos en curso. En la tabla de reparto, los pedidos
+que ya salieron y las reservas listas también quedan al final.
+
+La carga usa filas compactas: nombre y precio unitario como texto, cantidad
+con −/+ o escritura directa, subtotal y quitar. Editar abre el nombre y el
+precio sólo cuando se necesitan; Cancelar no cambia el ítem. Un ítem fuera de
+carta se agrega al aplicar, sin dejar filas vacías al cancelar. Quitar permite
+Deshacer. Los botones de productos muestran la cantidad ya elegida y sumar de
+nuevo incrementa la misma línea cuando el ítem y el precio coinciden. La lista
+tiene más espacio y mantiene su propio
+desplazamiento; Total y Guardar continúan fijos.
+
+Referencias consultadas para el diseño: [Odoo POS, líneas del pedido](https://github.com/odoo/odoo/blob/18.0/addons/point_of_sale/static/src/app/generic_components/orderline/orderline.xml),
+[tarjetas de producto de Odoo POS](https://github.com/odoo/odoo/blob/18.0/addons/point_of_sale/static/src/app/generic_components/product_card/product_card.xml)
+y [carrito de ERPNext](https://github.com/frappe/erpnext/blob/develop/erpnext/selling/page/point_of_sale/pos_item_cart.js).
+Se tomaron como referencia la jerarquía producto/cantidad/importe y la separación
+de los detalles de edición, manteniendo el diseño y la implementación de Suiload.
+
+Prueba de cantidades, edición/cancelación, deshacer, productos fuera de carta,
+orden de completadas, reparto y diseño móvil (con Chromium, Playwright y servidor):
+
+```bash
+node tests/web/capture-browser.cjs
+```

@@ -2,7 +2,7 @@
 // Comandas share the device database, backups and menu with delivery orders.
 (() => {
   const el = id => document.getElementById(id);
-  let config = {}, items = [], editId = null, payment = 'Efectivo', filter = 'todos', saving = false, resolveMode, initialized = false;
+  let config = {}, items = [], editId = null, payment = 'Efectivo', filter = 'todos', saving = false, resolveMode, initialized = false, itemBeingEdited = null, itemEditorFocus = null, lastRemoved = null;
   const active = () => config.modo_uso === 'comanda';
   const request = (url, body, method = 'POST') => window.SuiloadLocal.request(url, body === undefined ? {} : {method, body:JSON.stringify(body)});
   const esc = value => escapeHtml(value);
@@ -64,11 +64,12 @@
   el('co-otro-pago').onchange = e => setPayment(e.target.value || 'Efectivo');
   function itemButton(p) {
     const button=document.createElement('button');button.type='button';button.className='co-product';
-    button.innerHTML=`<strong>${esc(p.nombre)}</strong><span>${money(unitPrice(p))}</span>`;
+    button.dataset.productId=p.id;
+    button.innerHTML=`<strong>${esc(p.nombre)}</strong><span>${money(unitPrice(p))}</span><span class="co-product-count" aria-hidden="true" hidden></span><span class="co-product-add" aria-hidden="true">+</span>`;
     button.onclick=()=>{
       const old=items.find(i=>i.plato_id===p.id&&i.precio_unitario===unitPrice(p));
       if(old)old.cantidad++;else items.push({plato_id:p.id,nombre:p.nombre,cantidad:1,precio_unitario:unitPrice(p)});
-      renderItems();
+      renderItems();revealItem(items.indexOf(old||items.at(-1)));
     };return button;
   }
   function catalog() {
@@ -92,29 +93,98 @@
     const target=el(menu.length<=12?'co-quick-items':'co-search-results');
     visible.forEach(p=>target.append(itemButton(p)));
     if(menu.length>12&&!visible.length)target.textContent='No hay ítems con ese nombre.';
+    syncCatalogCounts();
   }
   el('co-search').oninput=catalog;
   function totals() {
     return window.SuiloadLocal.total({items,tipo:'Reserva',descuento_tipo:el('co-desc-tipo').value||null,descuento_valor:el('co-desc-valor').value});
   }
-  function updateTotal() { el('co-total').textContent=money(totals().total); }
-  function renderItems() {
-    const root=el('co-items');root.replaceChildren();
-    items.forEach((item,index)=>{
-      const row=document.createElement('div');row.className='co-item';
-      row.innerHTML=`<label class="field co-item-name">Ítem<input data-key="nombre" aria-label="Nombre del ítem ${index+1}" value="${esc(item.nombre)}" required /></label><label class="field">Cant.<input data-key="cantidad" aria-label="Cantidad de ${esc(item.nombre)}" type="number" min="1" step="1" value="${item.cantidad}" required /></label><label class="field">Precio u.<input data-key="precio_unitario" aria-label="Precio de ${esc(item.nombre)}" type="number" min="0" step="0.01" value="${item.precio_unitario}" required /></label><strong class="co-subtotal">${money(item.cantidad*item.precio_unitario)}</strong><button type="button" class="btn ghost sm" aria-label="Quitar ${esc(item.nombre)}">×</button>`;
-      row.querySelectorAll('input').forEach(input=>input.oninput=()=>{
-        item[input.dataset.key]=input.dataset.key==='nombre'?input.value:Number(input.value);
-        row.querySelector('.co-subtotal').textContent=money(item.cantidad*item.precio_unitario);updateTotal();
-      });
-      row.querySelector('button').onclick=()=>{items.splice(index,1);renderItems();};root.append(row);
+  function syncCatalogCounts() {
+    document.querySelectorAll('[data-product-id]').forEach(button=>{
+      const quantity=items.filter(item=>item.plato_id===Number(button.dataset.productId)).reduce((n,item)=>n+item.cantidad,0);
+      const badge=button.querySelector('.co-product-count');
+      badge.textContent=quantity;badge.hidden=!quantity;button.classList.toggle('is-selected',quantity>0);
+      button.setAttribute('aria-label',`Agregar ${button.querySelector('strong').textContent}${quantity?`. ${quantity} en el pedido`:''}`);
     });
-    updateTotal();
   }
+  function updateTotal() {
+    el('co-total').textContent=money(totals().total);
+    const units=items.reduce((n,item)=>n+item.cantidad,0);
+    el('co-item-count').textContent=items.length?`${units} ${units===1?'unidad':'unidades'} · ${items.length} ${items.length===1?'producto':'productos'}`:'Sin ítems';
+    syncCatalogCounts();
+  }
+  function revealItem(index) {
+    const root=el('co-items'),row=root.children[index];if(!row)return;
+    if(row.offsetTop<root.scrollTop)root.scrollTop=row.offsetTop;
+    else if(row.offsetTop+row.offsetHeight>root.scrollTop+root.clientHeight)root.scrollTop=row.offsetTop+row.offsetHeight-root.clientHeight;
+  }
+  function removeItem(item,index) {
+    lastRemoved={item,index};items.splice(index,1);
+    el('co-undo-label').textContent=`${item.nombre} quitado.`;el('co-undo').hidden=false;
+    renderItems();
+    const next=el('co-items').children[Math.min(index,items.length-1)];
+    if(next)next.querySelector('.co-qty-plus').focus({preventScroll:true});else el('co-undo-button').focus({preventScroll:true});
+  }
+  el('co-undo-button').onclick=()=>{
+    if(!lastRemoved)return;
+    const {item,index}=lastRemoved;
+    const same=items.find(i=>i.plato_id===item.plato_id&&i.nombre===item.nombre&&i.precio_unitario===item.precio_unitario);
+    if(same)same.cantidad+=item.cantidad;else items.splice(Math.min(index,items.length),0,item);
+    lastRemoved=null;el('co-undo').hidden=true;renderItems();
+  };
+  function renderItems() {
+    const root=el('co-items'),scroll=root.scrollTop;root.replaceChildren();
+    items.forEach(item=>{
+      const row=document.createElement('div');row.className='co-item';
+      row.innerHTML=`<div class="co-line-info"><strong>${esc(item.nombre)}</strong><div><span class="co-unit-price">${money(item.precio_unitario)} c/u</span><button type="button" class="co-line-edit" aria-label="Editar ${esc(item.nombre)}">Editar</button></div></div><div class="co-quantity" role="group" aria-label="Cantidad de ${esc(item.nombre)}"><button type="button" class="co-qty-minus" aria-label="Restar uno de ${esc(item.nombre)}">−</button><input data-key="cantidad" aria-label="Cantidad de ${esc(item.nombre)}" type="number" min="1" step="1" value="${item.cantidad}" required inputmode="numeric" /><button type="button" class="co-qty-plus" aria-label="Sumar uno de ${esc(item.nombre)}">+</button></div><strong class="co-subtotal">${money(item.cantidad*item.precio_unitario)}</strong><button type="button" class="co-line-remove" aria-label="Quitar ${esc(item.nombre)}" title="Quitar ítem">×</button>`;
+      const quantity=row.querySelector('input'),minus=row.querySelector('.co-qty-minus'),plus=row.querySelector('.co-qty-plus');
+      function update(value,normalize=false) {
+        if(Number.isSafeInteger(value)&&value>=1)item.cantidad=value;
+        if(normalize)quantity.value=item.cantidad;
+        minus.disabled=item.cantidad<=1;
+        row.querySelector('.co-subtotal').textContent=money(item.cantidad*item.precio_unitario);
+        updateTotal();
+      }
+      quantity.oninput=()=>update(Number(quantity.value));
+      quantity.onblur=()=>update(Math.max(1,Math.trunc(Number(quantity.value)||1)),true);
+      quantity.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();quantity.blur();}};
+      minus.onclick=()=>{update(item.cantidad-1,true);if(minus.disabled)plus.focus({preventScroll:true});};
+      plus.onclick=()=>update(item.cantidad+1,true);minus.disabled=item.cantidad<=1;
+      row.querySelector('.co-line-edit').onclick=()=>openItemEditor(item);
+      row.querySelector('.co-line-remove').onclick=()=>removeItem(item,items.indexOf(item));
+      root.append(row);
+    });
+    root.scrollTop=scroll;updateTotal();
+  }
+  function openItemEditor(item=null) {
+    itemBeingEdited=item;itemEditorFocus=document.activeElement;
+    el('co-item-title').textContent=item?'Editar ítem':'Ítem fuera de carta';
+    el('co-item-name').value=item?.nombre||'';el('co-item-price').value=item?.precio_unitario??'';el('co-item-error').textContent='';
+    el('modal-co-item').classList.add('show');el('co-item-name').focus();el('co-item-name').select();
+  }
+  function closeItemEditor(){el('modal-co-item').classList.remove('show');itemEditorFocus?.focus({preventScroll:true});itemBeingEdited=null;}
+  el('co-item-cancel').onclick=closeItemEditor;
+  el('co-item-form').onsubmit=e=>{
+    e.preventDefault();const name=el('co-item-name').value.trim(),price=Number(el('co-item-price').value);
+    if(!name||!Number.isFinite(price)||price<0){el('co-item-error').textContent='Ingresá un nombre y un precio válido.';return;}
+    const current=itemBeingEdited;
+    if(current){current.nombre=name;current.precio_unitario=price;}
+    else items.push({plato_id:null,nombre:name,cantidad:1,precio_unitario:price});
+    closeItemEditor();renderItems();
+    const index=current?items.indexOf(current):items.length-1;
+    const row=el('co-items').children[index];
+    if(row){revealItem(index);row.querySelector('.co-line-edit').focus({preventScroll:true});}
+  };
+  el('modal-co-item').addEventListener('keydown',e=>{
+    if(e.key!=='Tab')return;
+    const controls=[el('co-item-name'),el('co-item-price'),el('co-item-cancel'),el('co-item-apply')];
+    if(e.shiftKey&&document.activeElement===controls[0]){e.preventDefault();controls.at(-1).focus();}
+    else if(!e.shiftKey&&document.activeElement===controls.at(-1)){e.preventDefault();controls[0].focus();}
+  });
   el('co-desc-tipo').onchange=updateTotal;el('co-desc-valor').oninput=updateTotal;
-  el('co-custom').onclick=()=>{items.push({plato_id:null,nombre:'',cantidad:1,precio_unitario:0});renderItems();el('co-items').lastElementChild.querySelector('input').focus();};
+  el('co-custom').onclick=()=>openItemEditor();
   function clear() {
-    items=[];editId=null;el('comanda-form').reset();el('co-error').textContent='';
+    items=[];editId=null;lastRemoved=null;el('co-undo').hidden=true;el('comanda-form').reset();el('co-error').textContent='';
     el('co-title').textContent='Nueva comanda';el('co-save').textContent='Anotar comanda';el('co-cancel').textContent='Limpiar';
     setPayment(['Efectivo','Transferencia','QR','Posnet'].includes(config.metodo_pago_default)?config.metodo_pago_default:'Efectivo',false);
   }
@@ -131,7 +201,7 @@
     finally{saving=false;el('co-save').disabled=false;}
   };
   function edit(p) {
-    editId=p.id;items=structuredClone(p.items);payment=p.metodo_pago;
+    editId=p.id;items=structuredClone(p.items);payment=p.metodo_pago;lastRemoved=null;el('co-undo').hidden=true;
     el('co-nombre').value=p.cliente_nombre;el('co-numero').value=p.numero;el('co-mozo').value=p.repartidor||'';
     el('co-desc-tipo').value=p.descuento_tipo||'monto';el('co-desc-valor').value=p.descuento_valor||0;el('co-notas').value=p.notas||'';
     el('co-title').textContent=`Editar comanda N° ${p.numero}`;el('co-save').textContent='Guardar cambios';el('co-cancel').textContent='Cancelar edición';
@@ -156,9 +226,13 @@
     const names=[...new Set(orders.map(p=>p.repartidor).filter(Boolean))];
     el('co-mozos').innerHTML=names.map(n=>`<option value="${esc(n)}"></option>`).join('');
     const root=el('co-orders');root.replaceChildren();
-    const visible=orders.filter(p=>filter==='todos'||filter==='pendientes'&&!p.completado||filter==='listos'&&p.listo&&!p.completado||filter==='completados'&&p.completado||filter==='sin-pagar'&&!p.pagado);
+    const visible=orders.filter(p=>filter==='todos'||filter==='pendientes'&&!p.completado||filter==='listos'&&p.listo&&!p.completado||filter==='completados'&&p.completado||filter==='sin-pagar'&&!p.pagado).sort((a,b)=>Number(!!a.completado)-Number(!!b.completado));
     if(!visible.length)root.innerHTML='<div class="card muted">No hay comandas en esta vista.</div>';
+    let completedHeading=false;
     visible.forEach(p=>{
+      if(p.completado&&!completedHeading){
+        const heading=document.createElement('div');heading.className='co-completed-heading';heading.innerHTML=`<h3>Completadas</h3><span>${visible.filter(order=>order.completado).length}</span>`;root.append(heading);completedHeading=true;
+      }
       const card=document.createElement('article');card.className='card co-order'+(p.completado?' co-completed':'');card.dataset.id=p.id;
       card.innerHTML=`<div class="row between"><h3>N° ${p.numero}${p.cliente_nombre?' · '+esc(p.cliente_nombre):''}</h3><strong>${money(p.total)}</strong></div><p><span class="pago-pill ${pagoClase(p.metodo_pago)}">${p.metodo_pago==='Efectivo'?'💵':p.metodo_pago==='Transferencia'?'🏦':'💳'} ${esc(p.metodo_pago)}</span>${p.repartidor?' · Mozo: '+esc(p.repartidor):''}</p><ul>${p.items.map(i=>`<li><strong>${i.cantidad} × ${esc(i.nombre)}</strong><span>${money(i.cantidad*i.precio_unitario)}</span></li>`).join('')}</ul>${p.descuento_valor?`<p class="muted">Descuento: ${money(window.SuiloadLocal.total(p).descuento)}</p>`:''}${p.notas?`<p>${esc(p.notas)}</p>`:''}<div class="co-statuses"></div><div class="row co-order-actions"><button type="button" class="btn ghost sm co-edit">Editar</button><button type="button" class="btn ghost sm co-ticket">Ticket</button><button type="button" class="btn ghost sm co-annul">Anular</button></div>`;
       const statuses=card.querySelector('.co-statuses');statuses.append(statusButton(p,'pagado','No pagado','Pagado'));
