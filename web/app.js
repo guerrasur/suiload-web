@@ -2657,7 +2657,7 @@ async function loadCarta() {
       <td class="right">${money(p.precio_lista)}</td>
       <td>${p.activo ? "Sí" : "No"}</td>
       <td class="nowrap">
-        <button class="btn ghost sm c-edit">✎</button>
+        <button class="btn ghost sm c-edit" aria-label="Editar ${escapeAttr(p.nombre)}">Editar</button>
         ${p.activo
           ? '<button class="btn ghost sm c-baja">Baja</button>'
           : '<button class="btn danger sm c-borrar" title="Borrar definitivamente">🗑</button>'}
@@ -2886,6 +2886,7 @@ function pedirNombreLocalSiFalta() {
   await getConfigCached();
   aplicarNombreLocal(_cfgCache.nombre_local);
   await pedirNombreLocalSiFalta();
+  await window.SuiloadMenu.configureIfNeeded();
   await loadCatalog();
   $("f-envio").value = _cfgCache.costo_envio_default;
   resetForm();

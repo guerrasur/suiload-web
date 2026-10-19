@@ -6,6 +6,21 @@ function context(){const c={window:{},indexedDB,navigator:{},location:{origin:'h
 const c=context(),api=(url,b,method='POST')=>c.window.SuiloadLocal.request(url,b?{method,body:JSON.stringify(b)}:{method:'GET'});
 (async()=>{
  await c.window.SuiloadLocal.ready();
+ assert.deepEqual(JSON.parse(JSON.stringify(await api('/api/platos'))),[]);
+ await api('/api/platos/guardar-carta',{items:[{nombre:'Mi plato',precio_efectivo:'1200',precio_lista:''},{nombre:'Agua',precio_efectivo:'0',precio_lista:'500'}]});
+ let menu=await api('/api/platos');
+ const plato=menu.find(p=>p.nombre==='Mi plato');
+ assert.equal(plato.precio_lista,1200);assert.equal((await api('/api/config')).menu_configurado,'true');
+ const menuBefore=await c.window.SuiloadLocal.snapshot();
+ await assert.rejects(()=>api('/api/platos/guardar-carta',{items:[{id:plato.id,nombre:'No guardar',precio_efectivo:2000},{nombre:'Inválido',precio_efectivo:-1}]}),/precios válidos/);
+ assert.deepEqual(await c.window.SuiloadLocal.snapshot(),menuBefore);
+ await assert.rejects(()=>api('/api/platos/guardar-carta',{items:[{nombre:'  ',precio_efectivo:20}]}),/nombre/);
+ await assert.rejects(()=>api('/api/platos/guardar-carta',{items:[{nombre:'Sin precio',precio_efectivo:''}]}),/precios válidos/);
+ await api('/api/platos/guardar-carta',{items:[{id:plato.id,nombre:'Mi plato editado',precio_efectivo:1400,precio_lista:1500,activo:false}]});
+ menu=await api('/api/platos?incluir_inactivos=true');
+ assert.equal(menu.length,2);assert.equal(menu.find(p=>p.id===plato.id).nombre,'Mi plato editado');
+ assert.equal((await api('/api/platos')).length,1);
+
  await api('/api/config',{nombre_local:'Prueba'},'PUT');
  const cliente=await api('/api/clientes',{nombre:'Cliente prueba'});
  const body={fecha:'2026-10-07',cliente_nombre:'Cliente prueba',tipo:'Envío',items:[{nombre:'Cobb',cantidad:2,precio_unitario:10000}],costo_envio:3000,descuento_tipo:'porcentaje',descuento_valor:10,metodo_pago:'Efectivo'};
@@ -25,6 +40,9 @@ const c=context(),api=(url,b,method='POST')=>c.window.SuiloadLocal.request(url,b
  const cierre=await api(`/api/cuentas/${semanal.id}/cierres`,{hasta:'2026-10-07'});assert.equal(cierre.total,240);
  await api(`/api/cuentas/${semanal.id}/cierres/${cierre.id}/pagado`,{});
  assert.equal((await api(`/api/cuentas/${semanal.id}`)).saldo,0);
+ const orderBefore=await api('/api/pedidos?fecha=2026-10-07');
+ await api('/api/platos/guardar-carta',{items:[{id:plato.id,nombre:'Otro precio',precio_efectivo:9999,precio_lista:9999,activo:true}]});
+ assert.deepEqual(await api('/api/pedidos?fecha=2026-10-07'),orderBefore);
  const before=await c.window.SuiloadLocal.snapshot();
  await assert.rejects(()=>c.window.SuiloadLocal.restore(JSON.stringify({app:'suiload',data:{schema:1}})),/Copia/);
  assert.deepEqual(await c.window.SuiloadLocal.snapshot(),before);
@@ -46,5 +64,5 @@ const c=context(),api=(url,b,method='POST')=>c.window.SuiloadLocal.request(url,b
  const permutations=a=>a.length<=1?[a]:a.flatMap((v,i)=>permutations(a.filter((_,j)=>i!==j)).map(p=>[v,...p]));
  const best=Math.min(...permutations([0,1,2]).map(p=>r.cost(m,p)));assert.equal(r.cost(m,r.order(m)),best);
  const groups=r.distribute(m,[[0,0],[1,0],[2,0]],2);assert.equal(new Set(groups.flat()).size,3);assert.ok(groups.every(g=>g.length));
- console.log('PASS: totals, concurrent writes, numbering, invalid deletes, prepaid balance, weekly closures, backup validation, reload, XLSX, directed routes.');
+ console.log('PASS: empty menu, atomic menu setup/editing, historical order prices, totals, concurrent writes, numbering, invalid deletes, prepaid balance, weekly closures, backup validation, reload, XLSX, directed routes.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

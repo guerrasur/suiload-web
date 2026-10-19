@@ -75,3 +75,26 @@ paso separado: el actualizador detecta las versiones ya desplegadas.
 
 Desde v1.0.2, elegir Reserva o Envío en el formulario guarda automáticamente ese
 tipo como predeterminado para los próximos pedidos y al volver a abrir la web.
+
+## Primer ingreso y menú (web v1.0.3)
+
+Una instalación nueva comienza sin carta precargada. Después del nombre del
+local, el asistente permite cargar varios ítems con nombre y precio. Categoría
+y precio de lista son opcionales; dejar Lista vacío usa el precio en efectivo.
+Se puede elegir Configurar después y completarlo desde Carta.
+
+En **Carta → Editar menú y precios** se pueden agregar ítems, modificar nombres,
+categorías y ambos precios en una sola pantalla. Destildar Disponible oculta un
+ítem sin borrar su historial. Guardar cambios aplica todo junto; Cancelar deja
+el menú intacto. Los menús existentes se conservan y los pedidos anteriores no
+cambian de precio.
+
+El botón Modo oscuro / Modo claro usa la paleta de SuipachaLoader, toma inicialmente
+la preferencia del sistema y recuerda la elección en este navegador.
+
+Prueba de operaciones web, desde la raíz del repositorio:
+
+```bash
+mkdir -p /workspace/scratch/4a4a2ad47002
+node tests/web/operations.cjs
+```

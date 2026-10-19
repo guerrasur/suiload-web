@@ -2,8 +2,8 @@
 // Independent browser edition. IndexedDB is the authoritative database.
 // Each operation loads and commits within one exclusive cross-tab lock.
 (() => {
-  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true"};
-  const fresh = () => ({schema:1, config:{...defaults}, platos:structuredClone(window.SUILOAD_SEED), clientes:[], pedidos:[], cuentas:[], repartidores:{}, platosDia:{}, geocache:{}, seq:100});
+  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true", menu_configurado:"false"};
+  const fresh = () => ({schema:1, config:{...defaults}, platos:[], clientes:[], pedidos:[], cuentas:[], repartidores:{}, platosDia:{}, geocache:{}, seq:100});
   const today = () => new Date().toLocaleDateString("en-CA");
   const now = () => {const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,-1);};
   const round = n => Math.round((n+Number.EPSILON)*100)/100;
@@ -80,7 +80,7 @@
     const parts=path.split("/").filter(Boolean).slice(1), [domain,id,action,subid,subaction]=parts;
     const fecha=q.get("fecha")||today();const next=()=>++s.seq;
     const day=()=>s.pedidos.filter(p=>p.fecha===fecha&&!p.anulado);
-    if(domain==="version")return {version:"1.0.2 web"};
+    if(domain==="version")return {version:"1.0.3 web"};
     if(domain==="config") {
       if(method==="PUT") {
         const cfg={...s.config,...b};
@@ -100,6 +100,31 @@
       if(method==="PUT"){const c=find(s.clientes,id,"Cliente");Object.assign(c,data);return c;}
     }
     if(domain==="platos") {
+      if(id==="guardar-carta" && method==="POST") {
+        if(!Array.isArray(b.items)||!b.items.length)throw Error("Agregá al menos un ítem al menú.");
+        const seen=new Set();
+        const items=b.items.map(row=>{
+          const nombre=String(row.nombre||"").trim(), categoria=String(row.categoria||"").trim();
+          if(!nombre)throw Error("Cada ítem necesita un nombre.");
+          const price=value=>{
+            if(value==null||String(value).trim()===""||!Number.isFinite(Number(value))||Number(value)<0)throw Error("Ingresá precios válidos, iguales o mayores a cero.");
+            return Number(value);
+          };
+          const precio_efectivo=price(row.precio_efectivo);
+          const precio_lista=row.precio_lista==null||String(row.precio_lista).trim()===""?precio_efectivo:price(row.precio_lista);
+          const previous=row.id==null?null:find(s.platos,row.id,"Ítem");
+          if(previous && seen.has(previous.id))throw Error("Ítem repetido.");
+          if(previous)seen.add(previous.id);
+          return {...previous,nombre,categoria,precio_efectivo,precio_lista,activo:row.activo!==false,es_plato_del_dia:previous?.es_plato_del_dia||false};
+        });
+        // Validate the whole batch before changing any records or assigning IDs.
+        for(const item of items) {
+          if(item.id)Object.assign(find(s.platos,item.id,"Ítem"),item);
+          else s.platos.push({...item,id:next()});
+        }
+        s.config.menu_configurado="true";
+        return {actualizados:items.length};
+      }
       if(method==="GET")return s.platos.filter(p=>q.get("incluir_inactivos")==="true"||p.activo).sort((a,b)=>a.categoria.localeCompare(b.categoria)||orderNames(a,b));
       if(["aumentar","set-precios"].includes(id)){
         const selected=s.platos.filter(p=>b.ids==null?p.activo&&!p.es_plato_del_dia:b.ids.includes(p.id));
