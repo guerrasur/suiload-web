@@ -2753,7 +2753,9 @@ async function loadConfig() {
   _cfgCache = await api("/api/config");
   $("c-nombre-local").value = _cfgCache.nombre_local || "";
   $("c-demora").value = _cfgCache.minutos_demora_salida;
-  $("c-sinfact").value = _cfgCache.hora_alerta_sin_facturar;
+  $("c-sinfact").value = _cfgCache.hora_alerta_sin_facturar || "14:00";
+  $("c-alerta-sinfact").checked = _cfgCache.alerta_sin_facturar_habilitada === "true";
+  $("c-sinfact").disabled = !$("c-alerta-sinfact").checked;
   $("c-limite").value = _cfgCache.hora_limite_pedidos;
   $("c-envio").value = _cfgCache.costo_envio_default;
   $("c-no-envio").checked = _cfgCache.no_cobrar_envio_default === "true";
@@ -2766,11 +2768,15 @@ async function loadConfig() {
   $("c-direccion-local").value = _cfgCache.direccion_local || "";
   $("c-ciudad-default").value = _cfgCache.ciudad_default || "";
 }
+$("c-alerta-sinfact").addEventListener("change", () => {
+  $("c-sinfact").disabled = !$("c-alerta-sinfact").checked;
+});
 $("btn-guardar-config").addEventListener("click", async () => {
   const body = {
     nombre_local: $("c-nombre-local").value.trim(),
     minutos_demora_salida: +$("c-demora").value,
     hora_alerta_sin_facturar: $("c-sinfact").value.trim(),
+    alerta_sin_facturar_habilitada: $("c-alerta-sinfact").checked,
     hora_limite_pedidos: $("c-limite").value.trim(),
     costo_envio_default: +$("c-envio").value,
     no_cobrar_envio_default: $("c-no-envio").checked,
@@ -2786,6 +2792,7 @@ $("btn-guardar-config").addEventListener("click", async () => {
   try {
   _cfgCache = await api("/api/config", { method: "PUT", body: JSON.stringify(body) });
   aplicarNombreLocal(_cfgCache.nombre_local);
+  await loadDay();
   $("config-ok").textContent = "✓ Guardado";
   setTimeout(() => ($("config-ok").textContent = ""), 2000);
   toast("Configuración guardada. Los valores se aplican al próximo pedido nuevo.", "ok");

@@ -98,3 +98,9 @@ Prueba de operaciones web, desde la raíz del repositorio:
 mkdir -p /workspace/scratch/4a4a2ad47002
 node tests/web/operations.cjs
 ```
+
+Desde **web v1.0.4**, la alerta de pedidos sin facturar está desactivada por
+defecto. En la configuración inicial del menú se puede marcar Activar alerta
+y elegir una hora. La misma casilla está disponible en Configuración; desmarcarla
+elimina la alerta aunque haya una hora guardada. Las instalaciones anteriores
+sin una elección explícita también comienzan con esta alerta desactivada.

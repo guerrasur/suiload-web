@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Suiload — Suipacha Loader web</title>
   <link rel="icon" href="/icon.ico" />
-  <script src="/theme.js?v=1.0.3"></script>
-  <link rel="stylesheet" href="/styles.css?v=1.0.3" />
+  <script src="/theme.js?v=1.0.4"></script>
+  <link rel="stylesheet" href="/styles.css?v=1.0.4" />
 </head>
 <body>
   <header class="topbar">
@@ -343,8 +343,10 @@
           <input type="number" id="c-demora" />
         </div>
         <div class="field" style="margin-bottom:.6rem;">
-          <label>Hora de alerta de pedidos sin facturar (HH:MM)</label>
-          <input id="c-sinfact" placeholder="14:00" />
+          <label><input type="checkbox" id="c-alerta-sinfact" /> Activar alerta de pedidos sin facturar</label>
+          <label for="c-sinfact">Avisar a partir de las</label>
+          <input type="time" id="c-sinfact" value="14:00" disabled />
+          <small class="muted">Desactivada por defecto. Activala sólo si querés recordar los pedidos pendientes de facturación.</small>
         </div>
         <div class="field" style="margin-bottom:.6rem;">
           <label>Hora límite de toma de pedidos (HH:MM)</label>
@@ -419,6 +421,11 @@
       <form id="menu-form">
         <div id="menu-rows"></div>
         <button type="button" class="btn secondary" id="menu-add">+ Agregar ítem</button>
+        <div id="menu-alert-settings" class="panel" style="margin-top:1rem;">
+          <label><input type="checkbox" id="menu-alert-enabled" /> Activar alerta de pedidos sin facturar</label>
+          <p class="muted">Opcional y desactivada por defecto. Podés cambiarla después en Configuración.</p>
+          <label class="field">Avisar a partir de las <input type="time" id="menu-alert-time" value="14:00" disabled /></label>
+        </div>
         <p id="menu-error" class="menu-error" role="alert"></p>
         <div class="row menu-actions">
           <button type="button" class="btn ghost" id="menu-cancel">Configurar después</button>
@@ -593,12 +600,12 @@
 
   <div id="toasts" aria-live="polite"></div>
 
-  <script src="/version.js?v=1.0.3"></script>
-  <script src="/routes.js?v=1.0.3"></script>
-  <script src="/local-api.js?v=1.0.3"></script>
-  <script src="/excel.js?v=1.0.3"></script>
-  <script src="/menu.js?v=1.0.3"></script>
-  <script src="/app.js?v=1.0.3"></script>
-  <script src="/device.js?v=1.0.3"></script>
+  <script src="/version.js?v=1.0.4"></script>
+  <script src="/routes.js?v=1.0.4"></script>
+  <script src="/local-api.js?v=1.0.4"></script>
+  <script src="/excel.js?v=1.0.4"></script>
+  <script src="/menu.js?v=1.0.4"></script>
+  <script src="/app.js?v=1.0.4"></script>
+  <script src="/device.js?v=1.0.4"></script>
 </body>
 </html>

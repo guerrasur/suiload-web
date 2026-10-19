@@ -2,12 +2,15 @@
 // Independent browser edition. IndexedDB is the authoritative database.
 // Each operation loads and commits within one exclusive cross-tab lock.
 (() => {
-  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true", menu_configurado:"false"};
+  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", alerta_sin_facturar_habilitada:"false", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true", menu_configurado:"false"};
   const fresh = () => ({schema:1, config:{...defaults}, platos:[], clientes:[], pedidos:[], cuentas:[], repartidores:{}, platosDia:{}, geocache:{}, seq:100});
   const today = () => new Date().toLocaleDateString("en-CA");
   const now = () => {const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,-1);};
   const round = n => Math.round((n+Number.EPSILON)*100)/100;
   const positive = n => {if(!Number.isFinite(Number(n))) throw Error("Indicá un monto válido"); return Math.max(0,Number(n));};
+  function validateAlert(cfg) {
+    if(String(cfg.alerta_sin_facturar_habilitada)==="true"&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg.hora_alerta_sin_facturar))throw Error("Elegí una hora válida para la alerta (HH:MM)");
+  }
   const find = (rows,id,label) => {const r=rows.find(x=>x.id===+id);if(!r)throw Error(label+" no encontrado");return r;};
   const orderNames = (a,b) => (a.nombre||"").localeCompare(b.nombre||"", "es") || (a.direccion||"").localeCompare(b.direccion||"", "es");
   const remove = (rows,id) => rows.splice(rows.findIndex(x=>x.id===+id),1);
@@ -63,7 +66,7 @@
     result.esperando_hora_salida=!!waiting;result.demorado=false;result.alerta_sin_facturar=false;
     if(!p.anulado&&p.fecha===today()&&!waiting){
       result.demorado=p.tipo==="Envío"&&!p.hora_salida && Date.now()-new Date(p.hora_salida_programada||p.hora_pedido).getTime() > Number(cfg.minutos_demora_salida||30)*60000;
-      result.alerta_sin_facturar=!p.facturado&&now().slice(11,16)>=(cfg.hora_alerta_sin_facturar||"14:00");
+      result.alerta_sin_facturar=cfg.alerta_sin_facturar_habilitada==="true"&&!p.facturado&&now().slice(11,16)>=cfg.hora_alerta_sin_facturar;
     }
     return result;
   }
@@ -80,14 +83,15 @@
     const parts=path.split("/").filter(Boolean).slice(1), [domain,id,action,subid,subaction]=parts;
     const fecha=q.get("fecha")||today();const next=()=>++s.seq;
     const day=()=>s.pedidos.filter(p=>p.fecha===fecha&&!p.anulado);
-    if(domain==="version")return {version:"1.0.3 web"};
+    if(domain==="version")return {version:"1.0.4 web"};
     if(domain==="config") {
       if(method==="PUT") {
         const cfg={...s.config,...b};
         if(!["Envío","Reserva"].includes(cfg.tipo_pedido_default))throw Error("Tipo predeterminado inválido");
         if(!["Efectivo","Transferencia","QR","Posnet"].includes(cfg.metodo_pago_default))throw Error("Medio de pago predeterminado inválido");
         for(const k of ["minutos_demora_salida","costo_envio_default"])if(!Number.isFinite(Number(cfg[k]))||Number(cfg[k])<0)throw Error("Ingresá valores positivos en demora y envío");
-        for(const k of ["hora_alerta_sin_facturar","hora_limite_pedidos"])if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg[k]))throw Error("Ingresá horarios válidos (HH:MM)");
+        validateAlert(cfg);
+        for(const k of ["hora_limite_pedidos"])if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(cfg[k]))throw Error("Ingresá horarios válidos (HH:MM)");
         for(const k of Object.keys(defaults))if(b[k]!=null)s.config[k]=String(b[k]);
       }
       return s.config;
@@ -102,6 +106,11 @@
     if(domain==="platos") {
       if(id==="guardar-carta" && method==="POST") {
         if(!Array.isArray(b.items)||!b.items.length)throw Error("Agregá al menos un ítem al menú.");
+        const alertConfig=b.config?{
+          alerta_sin_facturar_habilitada:String(b.config.alerta_sin_facturar_habilitada),
+          hora_alerta_sin_facturar:String(b.config.hora_alerta_sin_facturar||"")
+        }:null;
+        if(alertConfig)validateAlert(alertConfig);
         const seen=new Set();
         const items=b.items.map(row=>{
           const nombre=String(row.nombre||"").trim(), categoria=String(row.categoria||"").trim();
@@ -122,6 +131,7 @@
           if(item.id)Object.assign(find(s.platos,item.id,"Ítem"),item);
           else s.platos.push({...item,id:next()});
         }
+        if(alertConfig)Object.assign(s.config,alertConfig);
         s.config.menu_configurado="true";
         return {actualizados:items.length};
       }

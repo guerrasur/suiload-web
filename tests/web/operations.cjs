@@ -64,5 +64,19 @@ const c=context(),api=(url,b,method='POST')=>c.window.SuiloadLocal.request(url,b
  const permutations=a=>a.length<=1?[a]:a.flatMap((v,i)=>permutations(a.filter((_,j)=>i!==j)).map(p=>[v,...p]));
  const best=Math.min(...permutations([0,1,2]).map(p=>r.cost(m,p)));assert.equal(r.cost(m,r.order(m)),best);
  const groups=r.distribute(m,[[0,0],[1,0],[2,0]],2);assert.equal(new Set(groups.flat()).size,3);assert.ok(groups.every(g=>g.length));
- console.log('PASS: empty menu, atomic menu setup/editing, historical order prices, totals, concurrent writes, numbering, invalid deletes, prepaid balance, weekly closures, backup validation, reload, XLSX, directed routes.');
+ // Billing reminders are opt-in, independent of the stored hour.
+ assert.equal((await api('/api/config')).alerta_sin_facturar_habilitada,'false');
+ const today=new Date().toLocaleDateString('en-CA');
+ const reminderOrder=await api('/api/pedidos',{...body,fecha:today});
+ const reminder=async()=>(await api('/api/pedidos?fecha='+today)).find(p=>p.id===reminderOrder.id);
+ assert.equal((await reminder()).alerta_sin_facturar,false);
+ await api('/api/config',{alerta_sin_facturar_habilitada:true,hora_alerta_sin_facturar:'00:00'},'PUT');
+ assert.equal((await reminder()).alerta_sin_facturar,true);
+ await assert.rejects(()=>api('/api/config',{hora_alerta_sin_facturar:'99:00'},'PUT'),/hora válida/);
+ const beforeInvalidReminder=await c.window.SuiloadLocal.snapshot();
+ await assert.rejects(()=>api('/api/platos/guardar-carta',{items:[{nombre:'No guardar',precio_efectivo:100}],config:{alerta_sin_facturar_habilitada:true,hora_alerta_sin_facturar:''}}),/hora válida/);
+ assert.deepEqual(await c.window.SuiloadLocal.snapshot(),beforeInvalidReminder);
+ await api('/api/config',{alerta_sin_facturar_habilitada:false,hora_alerta_sin_facturar:''},'PUT');
+ assert.equal((await reminder()).alerta_sin_facturar,false);
+ console.log('PASS: opt-in reminders, empty menu, atomic menu setup/editing, historical order prices, totals, concurrent writes, numbering, invalid deletes, prepaid balance, weekly closures, backup validation, reload, XLSX, directed routes.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
