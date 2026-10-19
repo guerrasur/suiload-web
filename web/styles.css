@@ -730,3 +730,47 @@ tbody tr.fila-elegida > td { background: var(--hover-bg); }
   header.topbar h1 { flex: 1 1 100%; width: 100%; }
   #usage-change { margin-left: auto; }
 }
+
+/* Payment identity stays consistent in both views, on cards and in totals. */
+.co-pay[data-pay="Efectivo"], .co-pay[data-delivery-pay="Efectivo"] { background: #1f8a4c; border-color: #166b39; color: #fff; }
+.co-pay[data-pay="Transferencia"], .co-pay[data-delivery-pay="Transferencia"] { background: #2f6fd0; border-color: #2456a6; color: #fff; }
+.co-pay[aria-pressed="false"] { filter: brightness(.65); opacity: .75; }
+.co-pay[aria-pressed="true"] { filter: none; opacity: 1; box-shadow: var(--focus-ring); }
+:root { --alias-height: 48px; --day-totals-height: 105px; --checkout-height: 85px; }
+body { padding-top: var(--alias-height); }
+header.topbar { top: var(--alias-height); }
+#alias-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 35; padding: .45rem 1.1rem; background: linear-gradient(110deg, #ffe59a, #f7bd4d); color: #392609; box-shadow: 0 2px 8px #0003; }
+#alias-display, #alias-form { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .4rem .8rem; }
+#alias-value { font-size: 1.1rem; font-weight: 850; letter-spacing: .03em; overflow-wrap: anywhere; }
+#alias-bar button { border: 1px solid #674a22; border-radius: 999px; padding: .25rem .75rem; background: #fff8df; color: #392609; font-weight: 650; }
+#alias-form label { font-weight: 700; }
+#alias-form input:not([type="checkbox"]) { padding: .4rem .55rem; border: 1px solid #674a22; border-radius: 6px; background: #fffdf2; color: #392609; width: min(330px, 60vw); }
+.alias-lock { display: inline-flex; align-items: center; gap: .3rem; }
+#alias-bar.alias-fixed #alias-value { text-decoration: underline; text-underline-offset: .2rem; }
+#alias-error { color: #7b150d; font-weight: 700; }
+#co-items, #items-list { height: clamp(150px, 24vh, 260px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: .3rem; }
+#co-items:empty::before, #items-list:empty::before { content: "Agregá los ítems del pedido. La lista se desplaza acá."; display: block; padding: 1rem .4rem; color: var(--muted); font-size: .85rem; }
+#view-pedidos { padding-bottom: calc(var(--day-totals-height) + var(--checkout-height) + 35px); }
+.order-checkout { position: fixed; z-index: 32; bottom: calc(var(--day-totals-height) + 8px); left: 50%; transform: translateX(-50%); width: min(1366px, calc(100% - 2rem)); margin: 0; box-shadow: var(--shadow-lg); }
+.comanda-mode #delivery-checkout { position: static; transform: none; width: auto; margin-top: 1rem; }
+#day-totals { position: fixed; z-index: 31; bottom: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding: .6rem max(1rem, calc((100vw - 1366px) / 2)); padding-bottom: calc(.6rem + env(safe-area-inset-bottom, 0px)); border-top: 2px solid var(--line-strong); background: var(--card); color: var(--ink); box-shadow: 0 -3px 15px #0002; }
+.day-total-main { display: grid; gap: .1rem; }
+.day-total-main > span, .day-total-main > small { color: var(--muted); font-size: .75rem; }
+#day-total-value { font-size: 1.3rem; color: var(--brand-strong); }
+.day-payment-totals { display: flex; flex-wrap: wrap; gap: .4rem; }
+.day-payment-totals .pago-pill { padding: .35rem .6rem; }
+#toasts { bottom: calc(var(--day-totals-height) + var(--checkout-height) + 25px); }
+@media (max-width: 600px) {
+  #alias-bar { padding: .4rem .65rem; }
+  #alias-value { font-size: 1rem; }
+  #day-totals { padding: .4rem .65rem; gap: .4rem; padding-bottom: calc(.4rem + env(safe-area-inset-bottom, 0px)); }
+  .day-total-main { flex: 1 1 100%; grid-template-columns: 1fr auto; align-items: center; }
+  .day-total-main > small { grid-column: 1 / -1; }
+  #day-total-value { font-size: 1.15rem; }
+  .day-payment-totals { flex: 1 1 auto; }
+  .day-payment-totals .pago-pill { font-size: .7rem; padding: .2rem .4rem; }
+  #day-export { padding: .35rem .5rem; font-size: .75rem; }
+  .order-checkout { width: calc(100% - 1.3rem); padding: .5rem .65rem; gap: .4rem; }
+  .order-checkout .btn { padding: .5rem .6rem; }
+  .order-checkout .total-box { font-size: 1.4rem; }
+}

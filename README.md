@@ -152,3 +152,25 @@ node tests/web/comandas-browser.cjs
 
 Publicación: la v1.1.0 incluye los cambios de la v1.0.4. Basta desplegar una vez
 la versión actual desde Cloud Shell; no hace falta publicar versiones intermedias.
+
+## Alias y controles siempre visibles (web v1.1.1)
+
+La barra superior muestra **ALIAS:** con el texto destacado. Editar permite
+cambiarlo; Dejar fijo conserva el alias bloqueado hasta pulsar Desbloquear.
+También se puede configurar desde Configuración. Se guarda en este navegador,
+se incluye en las copias JSON y queda visible en ambas vistas. La app espera
+si se está editando el alias antes de aplicar una actualización automática.
+
+La lista de ítems tiene altura acotada y desplazamiento propio. El total del
+pedido y Guardar quedan fijos sobre la barra inferior: agregar ítems no los
+empuja hacia abajo. La barra inferior muestra el total de todos los pedidos no
+anulados de la fecha elegida, los subtotales por medio de pago, lo cobrado y lo
+pendiente. **Exportar Excel del día** descarga esa fecha, también desde Comandas.
+Los medios conservan sus emojis y colores: 💵 efectivo verde y 🏦 transferencia
+azul; el botón no elegido se oscurece.
+
+Prueba adicional de navegador (con el mismo servidor y Playwright):
+
+```bash
+node tests/web/workspace-browser.cjs
+```

@@ -5,10 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Suiload — Suipacha Loader web</title>
   <link rel="icon" href="/icon.ico" />
-  <script src="/theme.js?v=1.1.0"></script>
-  <link rel="stylesheet" href="/styles.css?v=1.1.0" />
+  <script src="/theme.js?v=1.1.1"></script>
+  <link rel="stylesheet" href="/styles.css?v=1.1.1" />
 </head>
 <body>
+  <aside id="alias-bar" aria-label="Alias para transferencias">
+    <div id="alias-display"><span>ALIAS:</span> <strong id="alias-value">Configurar alias</strong><button type="button" id="alias-edit">✎ Editar</button></div>
+    <form id="alias-form" hidden>
+      <label for="alias-input">ALIAS:</label><input id="alias-input" maxlength="120" placeholder="mi.local.mp" autocomplete="off" />
+      <label class="alias-lock"><input type="checkbox" id="alias-lock" /> Dejar fijo 🔒</label>
+      <button type="submit" id="alias-save">Guardar</button><button type="button" id="alias-cancel">Cancelar</button>
+      <span id="alias-error" role="alert"></span>
+    </form>
+  </aside>
   <header class="topbar">
     <h1>🥗 <span id="local-name"></span>Suipacha Loader <span class="app-version" id="app-version"></span></h1>
     <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false"><span id="theme-label">Modo oscuro</span></button>
@@ -46,7 +55,7 @@
                 <label class="field co-number">N° de pedido <input type="number" min="1" step="1" id="co-numero" placeholder="Automático" /></label>
               </div>
               <fieldset class="co-payment"><legend>Medio de pago</legend>
-                <div class="row"><button type="button" class="co-pay" data-pay="Efectivo" aria-pressed="true">Efectivo</button><button type="button" class="co-pay" data-pay="Transferencia" aria-pressed="false">Transferencia</button></div>
+                <div class="row"><button type="button" class="co-pay" data-pay="Efectivo" aria-pressed="true">💵 Efectivo</button><button type="button" class="co-pay" data-pay="Transferencia" aria-pressed="false">🏦 Transferencia</button></div>
               </fieldset>
               <h3>Qué lleva</h3>
               <div id="co-quick-items" class="co-quick-items"></div>
@@ -64,7 +73,7 @@
                 <button type="button" class="btn ghost sm" id="co-custom">+ Ítem fuera de carta</button>
               </details>
               <p id="co-error" role="alert" class="menu-error"></p>
-              <div class="total-line"><div><span class="muted">Total</span><div id="co-total" class="total-box">$0</div></div><div class="row"><button type="button" class="btn ghost" id="co-cancel">Limpiar</button><button type="submit" class="btn" id="co-save">Anotar comanda</button></div></div>
+              <div class="total-line order-checkout" id="co-checkout"><div><span class="muted">Total</span><div id="co-total" class="total-box">$0</div></div><div class="row"><button type="button" class="btn ghost" id="co-cancel">Limpiar</button><button type="submit" class="btn" id="co-save">Anotar comanda</button></div></div>
             </form>
           </div>
           <div class="comanda-board">
@@ -145,7 +154,7 @@
             </div>
             <div class="field">
               <label>Método de pago</label>
-              <div class="row"><button type="button" class="co-pay delivery-pay" data-delivery-pay="Efectivo" aria-pressed="true">Efectivo</button><button type="button" class="co-pay delivery-pay" data-delivery-pay="Transferencia" aria-pressed="false">Transferencia</button></div>
+              <div class="row"><button type="button" class="co-pay delivery-pay" data-delivery-pay="Efectivo" aria-pressed="true">💵 Efectivo</button><button type="button" class="co-pay delivery-pay" data-delivery-pay="Transferencia" aria-pressed="false">🏦 Transferencia</button></div>
               <details><summary class="muted">Otros medios de pago</summary>
               <select id="f-pago">
                 <option value="Efectivo">💵 Efectivo</option>
@@ -213,7 +222,7 @@
             </div>
           </div>
 
-          <div class="total-line">
+          <div class="total-line order-checkout" id="delivery-checkout">
             <div>
               <span class="muted">Total</span>
               <div class="total-box" id="f-total">$0</div>
@@ -267,6 +276,11 @@
         </div>
       </div>
       </div>
+      <footer id="day-totals" aria-label="Resumen del día">
+        <div class="day-total-main"><span id="day-totals-label">Total del día</span><strong id="day-total-value">$0</strong><small id="day-payment-status"></small></div>
+        <div id="day-payment-totals" class="day-payment-totals"></div>
+        <button type="button" class="btn secondary" id="day-export">⬇ Exportar Excel del día</button>
+      </footer>
     </section>
 
     <!-- ============ CARTA ============ -->
@@ -386,6 +400,8 @@
       </div>
       <div class="card" style="max-width:520px;">
         <h2>Configuración</h2>
+        <label class="field">Alias para transferencias <input id="c-alias" maxlength="120" placeholder="mi.local.mp" /></label>
+        <label class="field"><span><input type="checkbox" id="c-alias-lock" /> Dejar el alias fijo 🔒</span></label>
         <label class="field">Usar Suiload para <select id="c-modo"><option value="delivery">Pedidos y reservas para delivery</option><option value="comanda">Anotar comandas</option></select></label>
         <label class="field"><span><input type="checkbox" id="c-marcho" checked /> Mostrar botón «No marchó / Marchó» en comandas</span></label>
         <div class="field" style="margin-bottom:.6rem;">
@@ -666,13 +682,14 @@
 
   <div id="toasts" aria-live="polite"></div>
 
-  <script src="/version.js?v=1.1.0"></script>
-  <script src="/routes.js?v=1.1.0"></script>
-  <script src="/local-api.js?v=1.1.0"></script>
-  <script src="/excel.js?v=1.1.0"></script>
-  <script src="/menu.js?v=1.1.0"></script>
-  <script src="/comandas.js?v=1.1.0"></script>
-  <script src="/app.js?v=1.1.0"></script>
-  <script src="/device.js?v=1.1.0"></script>
+  <script src="/version.js?v=1.1.1"></script>
+  <script src="/routes.js?v=1.1.1"></script>
+  <script src="/local-api.js?v=1.1.1"></script>
+  <script src="/excel.js?v=1.1.1"></script>
+  <script src="/menu.js?v=1.1.1"></script>
+  <script src="/comandas.js?v=1.1.1"></script>
+  <script src="/workspace-ui.js?v=1.1.1"></script>
+  <script src="/app.js?v=1.1.1"></script>
+  <script src="/device.js?v=1.1.1"></script>
 </body>
 </html>

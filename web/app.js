@@ -1656,6 +1656,7 @@ async function loadDay() {
   loadResumen();
   checkHoraLimite();
   await window.SuiloadComandas?.refresh();
+  window.SuiloadWorkspace.renderDayTotals();
 }
 
 function fmtFecha(iso) {
@@ -1881,6 +1882,7 @@ function actualizarPedidoEnTabla(actualizado) {
     }
   }
   window.SuiloadComandas?.refresh().catch(e => toast(e.message, "error"));
+  window.SuiloadWorkspace.renderDayTotals();
   loadResumen(); // los totales del día pueden haber cambiado
 }
 
@@ -2772,6 +2774,8 @@ async function loadConfig() {
   try {
   _cfgCache = await api("/api/config");
   $("c-nombre-local").value = _cfgCache.nombre_local || "";
+  $("c-alias").value = _cfgCache.alias_transferencia || "";
+  $("c-alias-lock").checked = _cfgCache.alias_bloqueado === "true";
   $("c-modo").value = _cfgCache.modo_uso;
   $("c-marcho").checked = _cfgCache.mostrar_marcho !== "false";
   $("c-demora").value = _cfgCache.minutos_demora_salida;
@@ -2797,6 +2801,8 @@ $("c-alerta-sinfact").addEventListener("change", () => {
 $("btn-guardar-config").addEventListener("click", async () => {
   const body = {
     nombre_local: $("c-nombre-local").value.trim(),
+    alias_transferencia: $("c-alias").value.trim(),
+    alias_bloqueado: $("c-alias-lock").checked,
     modo_uso: $("c-modo").value,
     modo_elegido: true,
     mostrar_marcho: $("c-marcho").checked,
@@ -2819,6 +2825,7 @@ $("btn-guardar-config").addEventListener("click", async () => {
   _cfgCache = await api("/api/config", { method: "PUT", body: JSON.stringify(body) });
   aplicarNombreLocal(_cfgCache.nombre_local);
   window.SuiloadComandas?.apply(_cfgCache);
+  window.SuiloadWorkspace.applyAlias(_cfgCache);
   await loadDay();
   $("config-ok").textContent = "✓ Guardado";
   setTimeout(() => ($("config-ok").textContent = ""), 2000);
@@ -2919,6 +2926,7 @@ function pedirNombreLocalSiFalta() {
   }
   await getConfigCached();
   aplicarNombreLocal(_cfgCache.nombre_local);
+  window.SuiloadWorkspace.applyAlias(_cfgCache);
   await pedirNombreLocalSiFalta();
   await window.SuiloadComandas.chooseModeIfNeeded();
   await window.SuiloadMenu.configureIfNeeded();

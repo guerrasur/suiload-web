@@ -9,6 +9,7 @@
   const modeButtons = [...document.querySelectorAll('[data-mode]')];
   function apply(cfg) {
     config = cfg;
+    document.body.classList.toggle("comanda-mode",active());
     if(!initialized){initialized=true;setPayment(config.metodo_pago_default||'Efectivo',false);}
     el('comanda-workspace').hidden = !active();
     el('delivery-workspace').hidden = active();
@@ -157,7 +158,7 @@
     if(!visible.length)root.innerHTML='<div class="card muted">No hay comandas en esta vista.</div>';
     visible.forEach(p=>{
       const card=document.createElement('article');card.className='card co-order'+(p.completado?' co-completed':'');card.dataset.id=p.id;
-      card.innerHTML=`<div class="row between"><h3>N° ${p.numero}${p.cliente_nombre?' · '+esc(p.cliente_nombre):''}</h3><strong>${money(p.total)}</strong></div><p class="muted">${esc(p.metodo_pago)}${p.repartidor?' · Mozo: '+esc(p.repartidor):''}</p><ul>${p.items.map(i=>`<li><strong>${i.cantidad} × ${esc(i.nombre)}</strong><span>${money(i.cantidad*i.precio_unitario)}</span></li>`).join('')}</ul>${p.descuento_valor?`<p class="muted">Descuento: ${money(window.SuiloadLocal.total(p).descuento)}</p>`:''}${p.notas?`<p>${esc(p.notas)}</p>`:''}<div class="co-statuses"></div><div class="row co-order-actions"><button type="button" class="btn ghost sm co-edit">Editar</button><button type="button" class="btn ghost sm co-ticket">Ticket</button><button type="button" class="btn ghost sm co-annul">Anular</button></div>`;
+      card.innerHTML=`<div class="row between"><h3>N° ${p.numero}${p.cliente_nombre?' · '+esc(p.cliente_nombre):''}</h3><strong>${money(p.total)}</strong></div><p><span class="pago-pill ${pagoClase(p.metodo_pago)}">${p.metodo_pago==='Efectivo'?'💵':p.metodo_pago==='Transferencia'?'🏦':'💳'} ${esc(p.metodo_pago)}</span>${p.repartidor?' · Mozo: '+esc(p.repartidor):''}</p><ul>${p.items.map(i=>`<li><strong>${i.cantidad} × ${esc(i.nombre)}</strong><span>${money(i.cantidad*i.precio_unitario)}</span></li>`).join('')}</ul>${p.descuento_valor?`<p class="muted">Descuento: ${money(window.SuiloadLocal.total(p).descuento)}</p>`:''}${p.notas?`<p>${esc(p.notas)}</p>`:''}<div class="co-statuses"></div><div class="row co-order-actions"><button type="button" class="btn ghost sm co-edit">Editar</button><button type="button" class="btn ghost sm co-ticket">Ticket</button><button type="button" class="btn ghost sm co-annul">Anular</button></div>`;
       const statuses=card.querySelector('.co-statuses');statuses.append(statusButton(p,'pagado','No pagado','Pagado'));
       if(config.mostrar_marcho!=='false')statuses.append(statusButton(p,'marcho','No marchó','Marchó'));
       statuses.append(statusButton(p,'listo','Sin preparar','Pedido listo'),statusButton(p,'completado','No completado','Completado'));

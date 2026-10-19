@@ -17,7 +17,7 @@
   async function applyUpdate(){
     if(reloading||!window.SuiloadAppReady)return;
     // Let modal workflows and inline saves finish before reloading.
-    if(document.querySelector('.modal-back.show')||document.activeElement?.closest('#tabla, #comanda-form'))return;
+    if(document.querySelector('.modal-back.show')||!el('alias-form').hidden||document.activeElement?.closest('#tabla, #comanda-form'))return;
     reloading=true;
     try {
       await SuiloadLocal.ready();

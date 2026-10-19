@@ -2,7 +2,7 @@
 // Independent browser edition. IndexedDB is the authoritative database.
 // Each operation loads and commits within one exclusive cross-tab lock.
 (() => {
-  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", alerta_sin_facturar_habilitada:"false", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true", menu_configurado:"false", modo_uso:"delivery", modo_elegido:"false", mostrar_marcho:"true"};
+  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", alerta_sin_facturar_habilitada:"false", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true", menu_configurado:"false", modo_uso:"delivery", modo_elegido:"false", mostrar_marcho:"true", alias_transferencia:"", alias_bloqueado:"false"};
   const fresh = () => ({schema:1, config:{...defaults}, platos:[], clientes:[], pedidos:[], cuentas:[], repartidores:{}, platosDia:{}, geocache:{}, seq:100});
   const today = () => new Date().toLocaleDateString("en-CA");
   const now = () => {const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,-1);};
@@ -100,7 +100,7 @@
     const parts=path.split("/").filter(Boolean).slice(1), [domain,id,action,subid,subaction]=parts;
     const fecha=q.get("fecha")||today();const next=()=>++s.seq;
     const day=()=>s.pedidos.filter(p=>p.fecha===fecha&&!p.anulado);
-    if(domain==="version")return {version:"1.1.0 web"};
+    if(domain==="version")return {version:"1.1.1 web"};
     if(domain==="config") {
       if(method==="PUT") {
         const cfg={...s.config,...b};
