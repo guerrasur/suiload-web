@@ -163,8 +163,8 @@ se incluye en las copias JSON y aparece en ambas vistas de pedidos. La app esper
 si se está editando el alias antes de aplicar una actualización automática.
 
 La lista de ítems tiene altura acotada y desplazamiento propio. El total del
-pedido y Guardar quedan fijos sobre la barra inferior: agregar ítems no los
-empuja hacia abajo. La barra inferior muestra el total de todos los pedidos no
+pedido y Guardar quedan fijos al pie de la pantalla: agregar ítems no los
+empuja hacia abajo. El resumen al final de la página muestra el total de todos los pedidos no
 anulados de la fecha elegida, los subtotales por medio de pago, lo cobrado y lo
 pendiente. **Exportar Excel del día** descarga esa fecha, también desde Comandas.
 Los medios conservan sus emojis y colores: 💵 efectivo verde y 🏦 transferencia
@@ -180,3 +180,7 @@ En **web v1.1.2** el alias se ubica dentro de la página, entre Comandas (o
 Pedidos y reservas) y el selector de fecha. En pantallas pequeñas pasa a una
 fila propia debajo del título. Usa el azul de la aplicación, con el alias
 en negrita, y conserva la edición y el bloqueo del texto.
+
+En **web v1.1.3**, el resumen del día y Exportar Excel del día quedan al final
+de la página, con desplazamiento normal. Sólo el total del pedido en curso y
+Guardar permanecen anclados al pie de la pantalla.

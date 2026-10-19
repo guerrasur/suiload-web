@@ -18,7 +18,8 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict');
  await page.evaluate(()=>SuiloadComandas.restoreDraft({items:Array.from({length:20},(_,i)=>({nombre:'Ítem '+i,cantidad:1,precio_unitario:10,plato_id:null})),payment:'Efectivo',fields:[]}));
  const after=await page.locator('#co-save').boundingBox();assert.ok(Math.abs(after.y-before.y)<1);assert.ok(after.y>=0&&after.y+after.height<=844);
  assert.ok(await page.locator('#co-items').evaluate(e=>e.scrollHeight>e.clientHeight));
- let checkout=await page.locator('#co-checkout').boundingBox(),footer=await page.locator('#day-totals').boundingBox();assert.ok(checkout.y+checkout.height<=footer.y);
+ assert.equal(await page.locator('#day-totals').evaluate(e=>getComputedStyle(e).position),'static');
+ assert.ok(after.y+after.height>780);
  await page.locator('#co-cancel').click();
  await page.evaluate(async()=>{
    const api=(url,b,method='POST')=>SuiloadLocal.request(url,{method,body:JSON.stringify(b)});

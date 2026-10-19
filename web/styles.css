@@ -736,7 +736,7 @@ tbody tr.fila-elegida > td { background: var(--hover-bg); }
 .co-pay[data-pay="Transferencia"], .co-pay[data-delivery-pay="Transferencia"] { background: #2f6fd0; border-color: #2456a6; color: #fff; }
 .co-pay[aria-pressed="false"] { filter: brightness(.65); opacity: .75; }
 .co-pay[aria-pressed="true"] { filter: none; opacity: 1; box-shadow: var(--focus-ring); }
-:root { --day-totals-height: 105px; --checkout-height: 85px; }
+:root { --checkout-height: 85px; }
 #alias-bar { position: static; min-width: 0; border-radius: var(--radius); padding: .7rem 1rem; background: var(--brand-soft); color: var(--ink); border: 1px solid var(--info-line); box-shadow: var(--shadow-sm); }
 #alias-display, #alias-form { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .4rem .8rem; }
 #alias-value { color: var(--brand-strong); font-size: 1.1rem; font-weight: 850; letter-spacing: .03em; overflow-wrap: anywhere; }
@@ -748,20 +748,20 @@ tbody tr.fila-elegida > td { background: var(--hover-bg); }
 #alias-error { color: var(--danger); font-weight: 700; }
 #co-items, #items-list { height: clamp(150px, 24vh, 260px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: .3rem; }
 #co-items:empty::before, #items-list:empty::before { content: "Agregá los ítems del pedido. La lista se desplaza acá."; display: block; padding: 1rem .4rem; color: var(--muted); font-size: .85rem; }
-#view-pedidos { padding-bottom: calc(var(--day-totals-height) + var(--checkout-height) + 35px); }
-.order-checkout { position: fixed; z-index: 32; bottom: calc(var(--day-totals-height) + 8px); left: 50%; transform: translateX(-50%); width: min(1366px, calc(100% - 2rem)); margin: 0; box-shadow: var(--shadow-lg); }
+#view-pedidos { padding-bottom: calc(var(--checkout-height) + 35px); }
+.order-checkout { position: fixed; z-index: 32; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); width: min(1366px, calc(100% - 2rem)); margin: 0; box-shadow: var(--shadow-lg); }
 .comanda-mode #delivery-checkout { position: static; transform: none; width: auto; margin-top: 1rem; }
-#day-totals { position: fixed; z-index: 31; bottom: 0; left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding: .6rem max(1rem, calc((100vw - 1366px) / 2)); padding-bottom: calc(.6rem + env(safe-area-inset-bottom, 0px)); border-top: 2px solid var(--line-strong); background: var(--card); color: var(--ink); box-shadow: 0 -3px 15px #0002; }
+#day-totals { position: static; margin-top: 1.2rem; border-radius: var(--radius); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem 1rem; padding: .8rem 1rem; border-top: 2px solid var(--line-strong); background: var(--card); color: var(--ink); box-shadow: 0 -3px 15px #0002; }
 .day-total-main { display: grid; gap: .1rem; }
 .day-total-main > span, .day-total-main > small { color: var(--muted); font-size: .75rem; }
 #day-total-value { font-size: 1.3rem; color: var(--brand-strong); }
 .day-payment-totals { display: flex; flex-wrap: wrap; gap: .4rem; }
 .day-payment-totals .pago-pill { padding: .35rem .6rem; }
-#toasts { bottom: calc(var(--day-totals-height) + var(--checkout-height) + 25px); }
+#toasts { bottom: calc(var(--checkout-height) + 25px); }
 @media (max-width: 600px) {
   #alias-bar { padding: .4rem .65rem; }
   #alias-value { font-size: 1rem; }
-  #day-totals { padding: .4rem .65rem; gap: .4rem; padding-bottom: calc(.4rem + env(safe-area-inset-bottom, 0px)); }
+  #day-totals { padding: .4rem .65rem; gap: .4rem; }
   .day-total-main { flex: 1 1 100%; grid-template-columns: 1fr auto; align-items: center; }
   .day-total-main > small { grid-column: 1 / -1; }
   #day-total-value { font-size: 1.15rem; }

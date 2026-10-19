@@ -54,13 +54,11 @@
   };
   function measure() {
     const style=document.documentElement.style;
-    const day=el('day-totals').getBoundingClientRect().height;
-    if(day)style.setProperty('--day-totals-height',day+'px');
     const current=el(document.body.classList.contains('comanda-mode')?'co-checkout':'delivery-checkout').getBoundingClientRect().height;
     if(current)style.setProperty('--checkout-height',current+'px');
   }
   const observer=new ResizeObserver(measure);
-  for(const id of ['day-totals','co-checkout','delivery-checkout'])observer.observe(el(id));
+  for(const id of ['co-checkout','delivery-checkout'])observer.observe(el(id));
   window.addEventListener('resize',measure);
   window.SuiloadWorkspace={applyAlias,renderDayTotals};
 })();
