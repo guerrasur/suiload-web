@@ -116,7 +116,7 @@ el plato del día. Los menús existentes no se reemplazan.
 Comandas pone primero comprador y número (ambos opcionales), Efectivo o
 Transferencia y los ítems. Una carta de hasta 12 ítems presenta un botón por
 ítem; para cartas mayores hay búsqueda. Repetir un botón suma cantidad. Si el
-número queda vacío, asigna el primer entero positivo disponible del día; un
+número queda vacío, asigna el siguiente al número más alto usado ese día; un
 número manual ya usado se rechaza sin guardar. Los números son únicos por fecha
 entre ambos modos. Mozo, descuento, notas, ítems fuera de carta y otros medios
 de pago están en Más opciones. Descuento comienza en Monto $ con valor cero.
@@ -213,3 +213,8 @@ orden de completadas, reparto y diseño móvil (con Chromium, Playwright y servi
 ```bash
 node tests/web/capture-browser.cjs
 ```
+
+En **web v1.1.5** la numeración automática continúa desde el número más alto de
+la fecha elegida, en ambas vistas. Si se carga el 280, siguen 281, 282, etc.
+Ingresar luego un número menor no baja la secuencia y los anulados siguen
+reservando su número. Cada fecha tiene su propia secuencia, comenzando en 1.

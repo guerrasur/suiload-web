@@ -49,3 +49,19 @@ test('XLSX records unpaid completed comandas with their kitchen states',async()=
  const data=Buffer.from(excel.build(await local.snapshot(),'2000-01-01')).toString('utf8');
  for(const [column,value] of [['P','Comanda'],['Q','No'],['R','Sí'],['S','Sí'],['T','Sí']])assert.match(data,new RegExp('r="'+column+'3"[^>]*><is><t[^>]*>'+value+'<'));
 });
+
+test('automatic numbers continue after the highest manual number, per day and across modes',async()=>{
+ const {api,local}=device();
+ const manual=await api('/api/pedidos',{...body,numero:280});
+ const [first,second]=await Promise.all([api('/api/pedidos',body),api('/api/pedidos',body)]);
+ assert.equal(first.numero,281);assert.equal(second.numero,282);
+ await api('/api/pedidos',{...body,numero:100});
+ assert.equal((await api('/api/pedidos',{...body,modo:'delivery',tipo:'Envío'})).numero,283);
+ await api('/api/pedidos/'+manual.id,{numero:500},'PATCH');
+ const high=await api('/api/pedidos',body);assert.equal(high.numero,501);
+ await api('/api/pedidos/'+high.id+'/anular',{});
+ assert.equal((await api('/api/pedidos',body)).numero,502);
+ assert.equal((await api('/api/pedidos',{...body,fecha:'2000-01-02'})).numero,1);
+ await local.restore(JSON.stringify({app:'suiload',data:await local.snapshot()}));
+ assert.equal((await api('/api/pedidos',body)).numero,503);
+});

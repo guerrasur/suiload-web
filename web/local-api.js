@@ -62,11 +62,9 @@
     p.items.forEach(i=>{i.cantidad=Math.max(1,Math.trunc(Number(i.cantidad)||1));i.precio_unitario=positive(i.precio_unitario||0);});
     p.total=total(p).total;
   }
-  function assignedNumber(s,fecha,value,mode,exceptId) {
+  function assignedNumber(s,fecha,value,exceptId) {
     if(value==null||String(value).trim()==="") {
-      if(mode!=="comanda")return number(s,fecha);
-      const used=new Set(s.pedidos.filter(p=>p.fecha===fecha&&p.id!==exceptId).map(p=>p.numero));
-      let n=1;while(used.has(n))n++;return n;
+      return number(s,fecha);
     }
     const n=Number(value);
     if(!Number.isSafeInteger(n)||n<1)throw Error("El número de pedido debe ser un entero positivo.");
@@ -74,9 +72,9 @@
     return n;
   }
   function number(s,fecha) {
-    const used=new Set(s.pedidos.filter(p=>p.fecha===fecha).map(p=>p.numero));
-    for(let i=0;i<90;i++){const n=10+(i*37)%90;if(!used.has(n))return n;}
-    return Math.max(...used)+1;
+    const highest=s.pedidos.reduce((max,p)=>p.fecha===fecha&&Number.isSafeInteger(p.numero)?Math.max(max,p.numero):max,0);
+    if(highest===Number.MAX_SAFE_INTEGER)throw Error("No quedan números automáticos disponibles para esta fecha.");
+    return highest+1;
   }
   function out(p,cfg) {
     const result=structuredClone(p), waiting=p.tipo==="Envío"&&!p.hora_salida&&p.hora_salida_programada&&now()<p.hora_salida_programada;
@@ -100,7 +98,7 @@
     const parts=path.split("/").filter(Boolean).slice(1), [domain,id,action,subid,subaction]=parts;
     const fecha=q.get("fecha")||today();const next=()=>++s.seq;
     const day=()=>s.pedidos.filter(p=>p.fecha===fecha&&!p.anulado);
-    if(domain==="version")return {version:"1.1.4 web"};
+    if(domain==="version")return {version:"1.1.5 web"};
     if(domain==="config") {
       if(method==="PUT") {
         const cfg={...s.config,...b};
@@ -180,7 +178,7 @@
       if(method==="GET")return s.pedidos.filter(p=>p.fecha===fecha).sort((a,b)=>a.hora_pedido.localeCompare(b.hora_pedido)||a.id-b.id).map(p=>out(p,s.config));
       if(method==="POST"&&!id) {
         const f=b.fecha||fecha;
-        const p={modo:"delivery",marcho:false,listo:false,completado:false,tipo:"Envío",cliente_nombre:"",cliente_direccion:"",cliente_telefono:"",indicaciones:"",items:[],costo_envio:0,no_cobrar_envio:false,descuento_tipo:null,descuento_valor:0,metodo_pago:"Efectivo",pago_efectivo_detalle:"",repartidor:"",notas:"",hora_salida_programada:null,...b,id:next(),fecha:f,numero:assignedNumber(s,f,b.numero,b.modo),hora_pedido:now(),hora_salida:null,orden_ruta:null,facturado:false,hora_facturado:null,pagado:false,anulado:false};
+        const p={modo:"delivery",marcho:false,listo:false,completado:false,tipo:"Envío",cliente_nombre:"",cliente_direccion:"",cliente_telefono:"",indicaciones:"",items:[],costo_envio:0,no_cobrar_envio:false,descuento_tipo:null,descuento_valor:0,metodo_pago:"Efectivo",pago_efectivo_detalle:"",repartidor:"",notas:"",hora_salida_programada:null,...b,id:next(),fecha:f,numero:assignedNumber(s,f,b.numero),hora_pedido:now(),hora_salida:null,orden_ruta:null,facturado:false,hora_facturado:null,pagado:false,anulado:false};
         p.items=p.items.map(i=>({...i,id:next()}));validateOrder(p);s.pedidos.push(p);return out(p,s.config);
       }
       const p=find(s.pedidos,id,"Pedido");
@@ -188,8 +186,8 @@
       if(action==="anular"||action==="restaurar"){p.anulado=action==="anular";return out(p,s.config);}
       if(method==="PATCH") {
         if(p.modo==="comanda"&&b.completado!==true&&(b.listo===false||b.marcho===false))b.completado=false;
-        if(b.fecha&&b.fecha!==p.fecha){b.numero=assignedNumber(s,b.fecha,b.numero,p.modo,p.id);b.orden_ruta=null;}
-        else if(b.numero!==undefined)b.numero=assignedNumber(s,p.fecha,b.numero,p.modo,p.id);
+        if(b.fecha&&b.fecha!==p.fecha){b.numero=assignedNumber(s,b.fecha,b.numero,p.id);b.orden_ruta=null;}
+        else if(b.numero!==undefined)b.numero=assignedNumber(s,p.fecha,b.numero,p.id);
         if(b.repartidor!==undefined&&b.repartidor!==p.repartidor&&b.orden_ruta===undefined)b.orden_ruta=null;
         if(b.facturado!==undefined)b.hora_facturado=b.facturado?(p.hora_facturado||now()):null;
         if(b.items)b.items=b.items.map(i=>({...i,id:next()}));

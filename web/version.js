@@ -1,1 +1,1 @@
-window.SUILOAD_VERSION = "1.1.4";
+window.SUILOAD_VERSION = "1.1.5";
