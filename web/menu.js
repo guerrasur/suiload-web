@@ -49,7 +49,7 @@
     el('menu-alert-enabled').checked = config.alerta_sin_facturar_habilitada === 'true';
     el('menu-alert-time').value = config.hora_alerta_sin_facturar || '14:00';
     syncAlert();
-    el('menu-title').textContent = initial ? 'Paso 2 de 2: armá tu menú' : 'Editar menú y precios';
+    el('menu-title').textContent = initial ? 'Paso 3 de 3: armá tu menú' : 'Editar menú y precios';
     el('menu-save').textContent = initial ? 'Guardar menú y continuar' : 'Guardar cambios';
     el('menu-cancel').textContent = initial ? 'Configurar después' : 'Cancelar';
     items.forEach(addRow);

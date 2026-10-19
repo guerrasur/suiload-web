@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Suiload — Suipacha Loader web</title>
   <link rel="icon" href="/icon.ico" />
-  <script src="/theme.js?v=1.0.4"></script>
-  <link rel="stylesheet" href="/styles.css?v=1.0.4" />
+  <script src="/theme.js?v=1.1.0"></script>
+  <link rel="stylesheet" href="/styles.css?v=1.1.0" />
 </head>
 <body>
   <header class="topbar">
     <h1>🥗 <span id="local-name"></span>Suipacha Loader <span class="app-version" id="app-version"></span></h1>
     <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false"><span id="theme-label">Modo oscuro</span></button>
+    <button type="button" class="theme-toggle" id="usage-change">Cambiar uso</button>
     <nav class="tabs">
       <button data-tab="pedidos" class="active">Pedidos</button>
       <button data-tab="carta">Carta</button>
@@ -30,6 +31,53 @@
     </div>
     <!-- ============ PEDIDOS ============ -->
     <section id="view-pedidos" class="view active">
+      <div id="comanda-workspace" hidden>
+        <div class="row between comanda-heading">
+          <div><h2>Comandas</h2><p class="muted">Comprador, pago y qué lleva. Lo demás es opcional.</p></div>
+          <div class="row"><label class="field">Día <input type="date" id="co-fecha" /></label><button type="button" class="btn secondary" id="co-hoy">Hoy</button></div>
+        </div>
+        <div id="co-deudas" class="card" hidden></div>
+        <div class="comanda-layout">
+          <div class="card comanda-entry">
+            <h2 id="co-title">Nueva comanda</h2>
+            <form id="comanda-form">
+              <div class="row">
+                <label class="field grow">Nombre del comprador <input id="co-nombre" placeholder="Opcional" autocomplete="off" /></label>
+                <label class="field co-number">N° de pedido <input type="number" min="1" step="1" id="co-numero" placeholder="Automático" /></label>
+              </div>
+              <fieldset class="co-payment"><legend>Medio de pago</legend>
+                <div class="row"><button type="button" class="co-pay" data-pay="Efectivo" aria-pressed="true">Efectivo</button><button type="button" class="co-pay" data-pay="Transferencia" aria-pressed="false">Transferencia</button></div>
+              </fieldset>
+              <h3>Qué lleva</h3>
+              <div id="co-quick-items" class="co-quick-items"></div>
+              <div id="co-catalog-search" hidden><label class="field">Buscar en el menú <input type="search" id="co-search" placeholder="Nombre o categoría" /></label><div id="co-search-results" class="co-quick-items"></div></div>
+              <p id="co-menu-empty" class="muted" hidden>Tu menú está vacío. Cargalo en Carta → Editar menú y precios.</p>
+              <div id="co-items" aria-live="polite"></div>
+              <details class="co-options"><summary>Mozo, descuento y más opciones</summary>
+                <div class="row">
+                  <label class="field grow">Mozo <input id="co-mozo" placeholder="Opcional" list="co-mozos" /></label><datalist id="co-mozos"></datalist>
+                  <label class="field">Descuento <select id="co-desc-tipo"><option value="monto" selected>Monto $</option><option value="porcentaje">Porcentaje %</option><option value="">Sin descuento</option></select></label>
+                  <label class="field">Valor <input type="number" min="0" step="0.01" id="co-desc-valor" value="0" /></label>
+                </div>
+                <label class="field">Notas / indicaciones <input id="co-notas" placeholder="Sin sal, para llevar…" /></label>
+                <label class="field">Otros medios de pago <select id="co-otro-pago"><option value="">Efectivo o Transferencia</option><option>QR</option><option>Posnet</option></select></label>
+                <button type="button" class="btn ghost sm" id="co-custom">+ Ítem fuera de carta</button>
+              </details>
+              <p id="co-error" role="alert" class="menu-error"></p>
+              <div class="total-line"><div><span class="muted">Total</span><div id="co-total" class="total-box">$0</div></div><div class="row"><button type="button" class="btn ghost" id="co-cancel">Limpiar</button><button type="submit" class="btn" id="co-save">Anotar comanda</button></div></div>
+            </form>
+          </div>
+          <div class="comanda-board">
+            <div id="co-summary" class="card" aria-live="polite"></div>
+            <div class="co-filters" id="co-filters" role="group" aria-label="Filtrar comandas">
+              <button type="button" class="btn secondary sm" data-filter="todos" aria-pressed="true">Todas</button><button type="button" class="btn ghost sm" data-filter="pendientes" aria-pressed="false">En curso</button><button type="button" class="btn ghost sm" data-filter="listos" aria-pressed="false">Listas</button><button type="button" class="btn ghost sm" data-filter="completados" aria-pressed="false">Completadas</button><button type="button" class="btn ghost sm" data-filter="sin-pagar" aria-pressed="false">Sin pagar</button>
+            </div>
+            <div id="co-orders" aria-live="polite"></div>
+          </div>
+        </div>
+        <button type="button" class="btn ghost" id="co-tools" aria-expanded="false">Más funciones: delivery, reservas, rutas y reportes</button>
+      </div>
+      <div id="delivery-workspace">
       <div id="banner-pendientes" class="banner info"></div>
 
       <div class="card">
@@ -97,12 +145,14 @@
             </div>
             <div class="field">
               <label>Método de pago</label>
+              <div class="row"><button type="button" class="co-pay delivery-pay" data-delivery-pay="Efectivo" aria-pressed="true">Efectivo</button><button type="button" class="co-pay delivery-pay" data-delivery-pay="Transferencia" aria-pressed="false">Transferencia</button></div>
+              <details><summary class="muted">Otros medios de pago</summary>
               <select id="f-pago">
                 <option value="Efectivo">💵 Efectivo</option>
                 <option value="Transferencia">🏦 Transferencia</option>
                 <option value="QR">QR</option>
                 <option value="Posnet">Posnet</option>
-              </select>
+              </select></details>
             </div>
             <div class="field" id="wrap-vuelto">
               <label>Paga con (vuelto)</label>
@@ -122,6 +172,7 @@
 
           <div class="field" style="margin:.6rem 0;">
             <label>Ítems</label>
+            <div id="delivery-quick-items" class="co-quick-items"></div>
             <div class="items-editor">
               <div class="item-line" style="font-size:.75rem;color:var(--muted);">
                 <span>Plato</span><span>Cant.</span><span>Precio u.</span><span class="right">Subtotal</span><span></span>
@@ -148,7 +199,7 @@
               <label>Descuento</label>
               <select id="f-desc-tipo">
                 <option value="">Sin descuento</option>
-                <option value="monto">Monto $</option>
+                <option value="monto" selected>Monto $</option>
                 <option value="porcentaje">Porcentaje %</option>
               </select>
             </div>
@@ -214,6 +265,7 @@
             <tbody id="tabla-body"></tbody>
           </table>
         </div>
+      </div>
       </div>
     </section>
 
@@ -334,6 +386,8 @@
       </div>
       <div class="card" style="max-width:520px;">
         <h2>Configuración</h2>
+        <label class="field">Usar Suiload para <select id="c-modo"><option value="delivery">Pedidos y reservas para delivery</option><option value="comanda">Anotar comandas</option></select></label>
+        <label class="field"><span><input type="checkbox" id="c-marcho" checked /> Mostrar botón «No marchó / Marchó» en comandas</span></label>
         <div class="field" style="margin-bottom:.6rem;">
           <label>Nombre del local (aparece en el título y en los Excel)</label>
           <input id="c-nombre-local" placeholder="Ej: Retiro" />
@@ -399,10 +453,22 @@
     </section>
   </main>
 
+  <div class="modal-back" id="modal-usage">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="usage-title">
+      <h2 id="usage-title">¿Para qué vas a usar hoy Suiload?</h2>
+      <p class="muted">Podés cambiar de modo cuando quieras. Tu menú y tus datos se conservan.</p>
+      <div class="usage-choices">
+        <button type="button" class="usage-choice" data-mode="delivery"><strong>Tomar pedidos y reservas para delivery</strong><span>Direcciones, repartidores, envíos y rutas. La versión que ya conocés.</span></button>
+        <button type="button" class="usage-choice" data-mode="comanda"><strong>Anotar comandas</strong><span>Comprador, medio de pago e ítems. Preparación, entrega y cobro en una sola vista.</span></button>
+      </div>
+      <p id="usage-error" role="alert" class="menu-error"></p>
+    </div>
+  </div>
+
   <!-- Modal nombre del local (una sola vez por dispositivo) -->
   <div class="modal-back" id="modal-local">
     <div class="modal">
-      <h2>Paso 1 de 2: nombre del local</h2>
+      <h2>Paso 1 de 3: nombre del local</h2>
       <p class="muted" style="font-size:.85rem;">¿Cómo se llama este local? Aparece en el título de la app y en los nombres de los Excel exportados (por ejemplo "Retiro").</p>
       <div class="field" style="margin-bottom:1rem;">
         <label>Nombre</label>
@@ -600,12 +666,13 @@
 
   <div id="toasts" aria-live="polite"></div>
 
-  <script src="/version.js?v=1.0.4"></script>
-  <script src="/routes.js?v=1.0.4"></script>
-  <script src="/local-api.js?v=1.0.4"></script>
-  <script src="/excel.js?v=1.0.4"></script>
-  <script src="/menu.js?v=1.0.4"></script>
-  <script src="/app.js?v=1.0.4"></script>
-  <script src="/device.js?v=1.0.4"></script>
+  <script src="/version.js?v=1.1.0"></script>
+  <script src="/routes.js?v=1.1.0"></script>
+  <script src="/local-api.js?v=1.1.0"></script>
+  <script src="/excel.js?v=1.1.0"></script>
+  <script src="/menu.js?v=1.1.0"></script>
+  <script src="/comandas.js?v=1.1.0"></script>
+  <script src="/app.js?v=1.1.0"></script>
+  <script src="/device.js?v=1.1.0"></script>
 </body>
 </html>

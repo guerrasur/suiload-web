@@ -672,3 +672,61 @@ tbody tr.fila-elegida > td { background: var(--hover-bg); }
 
 .menu-price-tools { margin: 1rem 0; }
 .menu-price-tools summary { cursor: pointer; color: var(--brand); font-weight: 600; }
+
+/* A shared database, two views: compact counter service and delivery tools. */
+[hidden] { display: none !important; }
+.usage-choices { display: grid; gap: 1rem; margin: 1.2rem 0; }
+.usage-choice { text-align: left; padding: 1.2rem; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); color: var(--ink); display: grid; gap: .5rem; }
+.usage-choice:hover, .usage-choice:focus-visible { border-color: var(--brand); background: var(--brand-soft); outline: none; box-shadow: var(--focus-ring); }
+.usage-choice strong { font-size: 1.05rem; color: var(--brand); }
+.usage-choice span { color: var(--muted); }
+.comanda-heading { margin-bottom: 1rem; }
+.comanda-heading p { margin: .4rem 0; }
+.comanda-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: 1.2rem; }
+.comanda-layout .card { margin-bottom: 1rem; }
+.co-number { max-width: 145px; }
+.co-payment { border: 0; padding: 0; margin: 1rem 0; }
+.co-payment legend { font-size: .8rem; color: var(--muted); margin-bottom: .5rem; }
+.co-pay { flex: 1; border: 2px solid var(--line-strong); border-radius: var(--radius-sm); min-height: 48px; background: var(--disabled-bg); color: var(--muted); font-weight: 700; opacity: .65; }
+.co-pay[aria-pressed="true"] { background: var(--brand-soft); color: var(--brand-strong); border-color: var(--brand); opacity: 1; box-shadow: var(--shadow-sm); }
+.co-pay:focus-visible, .co-status:focus-visible, .co-product:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.co-quick-items { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: .5rem; margin: .7rem 0; }
+.co-product { display: flex; flex-direction: column; align-items: start; gap: .25rem; padding: .65rem .8rem; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--panel); color: var(--ink); text-align: left; }
+.co-product:hover { border-color: var(--brand); background: var(--brand-soft); }
+.co-product span { color: var(--brand); }
+.co-item { display: grid; grid-template-columns: minmax(100px, 1fr) 62px 90px auto 28px; gap: .4rem; align-items: end; padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.co-item .field { min-width: 0; margin: 0; }
+.co-item input { min-width: 0; width: 100%; padding: .35rem; }
+.co-subtotal { align-self: center; padding-top: 1rem; font-size: .9rem; }
+.co-options { margin: 1rem 0; }
+.co-options summary { color: var(--brand); cursor: pointer; margin-bottom: .8rem; }
+.co-options .field { margin-bottom: .6rem; }
+.co-filters { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .8rem; }
+.co-order h3 { overflow-wrap: anywhere; }
+.co-order ul { padding: .6rem 0; margin: .5rem 0; list-style: none; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.co-order li { display: flex; justify-content: space-between; gap: 1rem; padding: .25rem 0; }
+.co-order li strong { overflow-wrap: anywhere; }
+.co-statuses { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+.co-status { background: var(--panel); color: var(--ink-soft); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: .65rem .4rem; font-weight: 650; }
+.co-status.is-done { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.co-order-actions { justify-content: flex-end; margin-top: .5rem; }
+.co-completed { border-left: 4px solid var(--ok); }
+.co-unpaid { color: var(--warn); font-weight: 700; }
+.co-debt { padding: .6rem 0; border-top: 1px solid var(--line); }
+#co-deudas { border-color: var(--warn); }
+#co-deudas summary { cursor: pointer; }
+#co-tools { margin-bottom: 1rem; }
+@media (max-width: 1050px) { .comanda-layout { grid-template-columns: 1fr; } }
+@media (max-width: 480px) {
+  .co-item { grid-template-columns: minmax(80px, 1fr) 52px 78px 28px; }
+  .co-item-name { grid-column: 1 / -1; }
+  .co-subtotal { padding: 0; grid-column: 3; grid-row: 2; font-size: .85rem; }
+  .co-item label:nth-child(2) { grid-column: 1; }
+  .co-item label:nth-child(3) { grid-column: 2; }
+  .co-item > button { grid-column: 4; }
+}
+
+@media (max-width: 720px) {
+  header.topbar h1 { flex: 1 1 100%; width: 100%; }
+  #usage-change { margin-left: auto; }
+}

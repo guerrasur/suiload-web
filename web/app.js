@@ -394,6 +394,7 @@ $("cuenta-detalle").addEventListener("submit", async (e) => {
 // ------------------------------------------------------------ catalog cache
 async function loadCatalog() {
   state.platos = await api("/api/platos");
+  window.SuiloadComandas?.catalog();
 }
 const platosNormales = () => state.platos.filter((p) => !p.es_plato_del_dia);
 const platoDelDia = () => state.platos.find((p) => p.es_plato_del_dia);
@@ -524,6 +525,8 @@ function renderItems() {
   recalc();
 }
 
+window.SuiloadDeliveryRenderItems = renderItems;
+
 // Actualiza sólo el subtotal de una línea, sin rearmar la lista (ver los
 // handlers de cantidad/precio).
 function actualizarTotalLinea(idx) {
@@ -589,6 +592,10 @@ function updateVueltoCalc() {
 );
 $("f-vuelto").addEventListener("input", updateVueltoCalc);
 $("f-pago").addEventListener("change", () => { toggleVuelto(); reapplyPrices(); recalc(); });
+document.querySelectorAll('[data-delivery-pay]').forEach(button => button.addEventListener('click', () => {
+   $("f-pago").value = button.dataset.deliveryPay;
+   $("f-pago").dispatchEvent(new Event('change'));
+ }));
 $("add-item").addEventListener("click", () => addItem(false));
 $("add-pdd").addEventListener("click", () => addItem(true));
 $("btn-cancelar").addEventListener("click", resetForm);
@@ -600,8 +607,10 @@ function toggleEnvio() {
   $("wrap-hora-programada").style.display = esEnvio ? "" : "none";
 }
 function toggleVuelto() {
+  document.querySelectorAll('[data-delivery-pay]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.deliveryPay === $("f-pago").value)));
   $("wrap-vuelto").style.display = $("f-pago").value === "Efectivo" ? "" : "none";
   $("f-pago").className = "select-pago " + pagoClase($("f-pago").value);
+  window.SuiloadComandas?.catalog();
 }
 $("f-tipo").addEventListener("change", async () => {
   const tipo = $("f-tipo").value;
@@ -723,6 +732,7 @@ function resetForm() {
   $("f-tipo").value = _cfgCache?.tipo_pedido_default || "Envío";
   $("f-pago").value = _cfgCache?.metodo_pago_default || "Efectivo";
   $("f-vuelto").value = _cfgCache?.pago_efectivo_default || "";
+  $("f-desc-tipo").value = "monto";
   $("form-title").textContent = "📝 Nuevo pedido";
   $("btn-guardar").textContent = "Guardar pedido";
   fillRepartidorSelect($("f-repartidor"), repartidorDefault());
@@ -1645,6 +1655,7 @@ async function loadDay() {
   if (cambio) renderTabla();
   loadResumen();
   checkHoraLimite();
+  await window.SuiloadComandas?.refresh();
 }
 
 function fmtFecha(iso) {
@@ -1869,6 +1880,7 @@ function actualizarPedidoEnTabla(actualizado) {
       tr.remove(); // ej: filtro "pendientes" y el pedido dejó de estarlo
     }
   }
+  window.SuiloadComandas?.refresh().catch(e => toast(e.message, "error"));
   loadResumen(); // los totales del día pueden haber cambiado
 }
 
@@ -2074,7 +2086,12 @@ function drawTicket(p) {
 
   // Línea de cobro. El vuelto calculado es solo para uso interno (formulario
   // y tabla de pedidos): no se imprime acá, solo el total y con cuánto paga.
-  if (p.metodo_pago === "Efectivo") {
+  if (p.modo === "comanda") {
+    const cobro = `${p.pagado ? "PAGADO" : "SIN PAGAR"}: ${money(p.total)}`;
+    L.linea(cobro, fitFont(mc, cobro, ANCHO, "900", [52,46,40,34]), p.pagado ? "#1f8a4c" : "#b3261e", "center", W / 2);
+    L.espacio(6);
+    L.linea(p.metodo_pago, fuente("bold",30), "#555", "center", W / 2);
+  } else if (p.metodo_pago === "Efectivo") {
     const cobro = `Cobrar: ${money(p.total)}`;
     L.linea(cobro, fitFont(mc, cobro, ANCHO, "900", [52, 46, 40, 34]), "#b3261e", "center", W / 2);
     const pagaCon = _pagaConTexto(p);
@@ -2157,7 +2174,7 @@ function openTicket(p) {
   $("ticket-maps").textContent = "🗺️ Ver dirección en Maps";
   $("ticket-copiar").textContent = "📋 Copiar imagen";
   $("ticket-contacto").textContent = "👤 Copiar contacto";
-  $("ticket-hint").textContent = "Copiá la imagen y pegala (Ctrl+V) en el chat de WhatsApp del repartidor. Con \"Copiar contacto\" le pegás también el teléfono del cliente.";
+  $("ticket-hint").textContent = p.modo === "comanda" ? "Ticket de comanda. El estado de pago es independiente de la preparación y la entrega." : "Copiá la imagen y pegala (Ctrl+V) en el chat de WhatsApp del repartidor. Con \"Copiar contacto\" le pegás también el teléfono del cliente.";
   $("modal-ticket").classList.add("show");
 }
 
@@ -2750,8 +2767,13 @@ $("mp-save").addEventListener("click", async () => {
 
 // ------------------------------------------------------------------ config
 async function loadConfig() {
+  const controls = [$("c-modo"), $("c-marcho"), $("btn-guardar-config")];
+  controls.forEach(control => control.disabled = true);
+  try {
   _cfgCache = await api("/api/config");
   $("c-nombre-local").value = _cfgCache.nombre_local || "";
+  $("c-modo").value = _cfgCache.modo_uso;
+  $("c-marcho").checked = _cfgCache.mostrar_marcho !== "false";
   $("c-demora").value = _cfgCache.minutos_demora_salida;
   $("c-sinfact").value = _cfgCache.hora_alerta_sin_facturar || "14:00";
   $("c-alerta-sinfact").checked = _cfgCache.alerta_sin_facturar_habilitada === "true";
@@ -2767,6 +2789,7 @@ async function loadConfig() {
   $("c-auto-update").checked = _cfgCache.buscar_actualizaciones_auto !== "false";
   $("c-direccion-local").value = _cfgCache.direccion_local || "";
   $("c-ciudad-default").value = _cfgCache.ciudad_default || "";
+  } finally { controls.forEach(control => control.disabled = false); }
 }
 $("c-alerta-sinfact").addEventListener("change", () => {
   $("c-sinfact").disabled = !$("c-alerta-sinfact").checked;
@@ -2774,6 +2797,9 @@ $("c-alerta-sinfact").addEventListener("change", () => {
 $("btn-guardar-config").addEventListener("click", async () => {
   const body = {
     nombre_local: $("c-nombre-local").value.trim(),
+    modo_uso: $("c-modo").value,
+    modo_elegido: true,
+    mostrar_marcho: $("c-marcho").checked,
     minutos_demora_salida: +$("c-demora").value,
     hora_alerta_sin_facturar: $("c-sinfact").value.trim(),
     alerta_sin_facturar_habilitada: $("c-alerta-sinfact").checked,
@@ -2792,6 +2818,7 @@ $("btn-guardar-config").addEventListener("click", async () => {
   try {
   _cfgCache = await api("/api/config", { method: "PUT", body: JSON.stringify(body) });
   aplicarNombreLocal(_cfgCache.nombre_local);
+  window.SuiloadComandas?.apply(_cfgCache);
   await loadDay();
   $("config-ok").textContent = "✓ Guardado";
   setTimeout(() => ($("config-ok").textContent = ""), 2000);
@@ -2893,6 +2920,7 @@ function pedirNombreLocalSiFalta() {
   await getConfigCached();
   aplicarNombreLocal(_cfgCache.nombre_local);
   await pedirNombreLocalSiFalta();
+  await window.SuiloadComandas.chooseModeIfNeeded();
   await window.SuiloadMenu.configureIfNeeded();
   await loadCatalog();
   $("f-envio").value = _cfgCache.costo_envio_default;
@@ -2901,7 +2929,7 @@ function pedirNombreLocalSiFalta() {
   await loadPendientes();
   // Al iniciar el día (si es hoy): preguntar los repartidores y el plato del
   // día que todavía no se hayan cargado, uno después del otro.
-  if (state.fecha === todayISO() && !sessionStorage.getItem('suiload-update-draft')) {
+  if (!window.SuiloadComandas.active() && state.fecha === todayISO() && !sessionStorage.getItem('suiload-update-draft')) {
     const necesitaRep = state.repartidoresDia.length === 0;
     const necesitaPdd = !state.platoDia.definido;
     if (necesitaRep) {
@@ -2928,6 +2956,6 @@ function pedirNombreLocalSiFalta() {
 function estaOcupado() {
   if (document.querySelector(".modal-back.show")) return true;
   const el = document.activeElement;
-  if (el && typeof el.closest === "function" && el.closest("#tabla, #pedido-form")) return true;
+  if (el && typeof el.closest === "function" && el.closest("#tabla, #pedido-form, #comanda-form, #co-orders")) return true;
   return false;
 }

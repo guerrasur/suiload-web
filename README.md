@@ -104,3 +104,51 @@ defecto. En la configuración inicial del menú se puede marcar Activar alerta
 y elegir una hora. La misma casilla está disponible en Configuración; desmarcarla
 elimina la alerta aunque haya una hora guardada. Las instalaciones anteriores
 sin una elección explícita también comienzan con esta alerta desactivada.
+
+## Reparto y comandas (web v1.1.0)
+
+Después del nombre del local se elige el uso: **pedidos y reservas para delivery**
+o **anotar comandas**. Se puede alternar desde Cambiar uso en la barra superior
+o desde Configuración → Usar Suiload para. La elección se recuerda; no se borra
+el menú ni el historial. El modo comandas no pregunta por repartidores ni por
+el plato del día. Los menús existentes no se reemplazan.
+
+Comandas pone primero comprador y número (ambos opcionales), Efectivo o
+Transferencia y los ítems. Una carta de hasta 12 ítems presenta un botón por
+ítem; para cartas mayores hay búsqueda. Repetir un botón suma cantidad. Si el
+número queda vacío, asigna el primer entero positivo disponible del día; un
+número manual ya usado se rechaza sin guardar. Los números son únicos por fecha
+entre ambos modos. Mozo, descuento, notas, ítems fuera de carta y otros medios
+de pago están en Más opciones. Descuento comienza en Monto $ con valor cero.
+
+El tablero muestra ítems, total, pago, Marchó, Pedido listo y Completado.
+Completar marca Marchó y Listo, sin modificar Pagado. Se puede deshacer cada
+estado; quitar Listo o Marchó también quita Completado. Configuración permite
+ocultar Marchó. Los cobros pendientes del día se resumen junto al tablero;
+los de días anteriores aparecen en Pendientes de cobro, aunque la comanda esté
+completada. Tickets distinguen la transferencia de un pago efectivamente
+marcado y los XLSX incluyen uso, pago y estados de la comanda.
+
+Las funciones de reparto, reservas, rutas, reportes, clientes y cuentas siguen
+accesibles desde Más funciones o cambiando a Reparto. La vista de comandas
+filtra las comandas; la tabla original permite consultar también el historial
+completo y restaurar anulaciones. Las copias JSON conservan los nuevos estados. Las actualizaciones
+automáticas también recuperan el borrador de la comanda en curso.
+
+Validación desde la raíz:
+
+```bash
+node --test tests/web/comandas.cjs
+node tests/web/operations.cjs
+```
+
+Para la prueba de navegador se requiere Playwright disponible para Node y
+Chromium instalado (CHROMIUM_PATH permite cambiar el ejecutable). Con el servidor
+estático en otra terminal, ejecutar:
+
+```bash
+node tests/web/comandas-browser.cjs
+```
+
+Publicación: la v1.1.0 incluye los cambios de la v1.0.4. Basta desplegar una vez
+la versión actual desde Cloud Shell; no hace falta publicar versiones intermedias.

@@ -18,15 +18,15 @@
   }
   const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
   const pre='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-  const columns=['N°','Hora','Tipo','Cliente','Dirección','Ítems','Envío','Descuento','Total','Pago','Detalle pago','Repartidor','Hora salida','Facturado','Notas'];
-  const widths=[6,8,11,20,24,40,10,11,12,14,14,14,12,11,20];
+  const columns=['N°','Hora','Tipo','Cliente','Dirección','Ítems','Envío','Descuento','Total','Pago','Detalle pago','Repartidor / Mozo','Hora salida','Facturado','Notas','Uso','Pagado','Marchó','Listo','Completado'];
+  const widths=[6,8,11,20,24,40,10,11,12,14,14,14,12,11,20,14,11,11,11,14];
   const months=['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   const cell=(r,c,value,style=0)=>{const ref=String.fromCharCode(65+c)+r;return typeof value==='number'?`<c r="${ref}" s="${style}"><v>${value}</v></c>`:`<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`;};
   function sheet(s,fecha,rows){
     const local=s.config.nombre_local||'Suipacha',formatted=fecha.split('-').reverse().join('/');
     let row=3,total=0,count=0,by={Efectivo:0,Transferencia:0,QR:0,Posnet:0};
     let cells=`<row r="1" ht="26" customHeight="1">${cell(1,0,`${local} — Pedidos ${formatted}`,1)}</row><row r="2">${columns.map((v,c)=>cell(2,c,v,1)).join('')}</row>`;
-    for(const p of rows){const t=window.SuiloadLocal.total(p),values=[p.numero||'',p.hora_pedido?.slice(11,16)||'',p.tipo,p.cliente_nombre,p.cliente_direccion,p.items.map(i=>`${i.cantidad}x ${i.nombre}`).join('\n'),t.envio||'',t.descuento||'',p.total,p.metodo_pago,p.pago_efectivo_detalle,p.repartidor,p.hora_salida?.slice(11,16)||'',p.facturado?'Sí':'No',(p.anulado?'ANULADO — ':'')+p.notas];
+    for(const p of rows){const t=window.SuiloadLocal.total(p),values=[p.numero||'',p.hora_pedido?.slice(11,16)||'',p.tipo,p.cliente_nombre,p.cliente_direccion,p.items.map(i=>`${i.cantidad}x ${i.nombre}`).join('\n'),t.envio||'',t.descuento||'',p.total,p.metodo_pago,p.pago_efectivo_detalle,p.repartidor,p.hora_salida?.slice(11,16)||'',p.facturado?'Sí':'No',(p.anulado?'ANULADO — ':'')+p.notas,p.modo==='comanda'?'Comanda':'Delivery',p.pagado?'Sí':'No',p.modo==='comanda'?(p.marcho?'Sí':'No'):'',p.modo==='comanda'?(p.listo?'Sí':'No'):'',p.modo==='comanda'?(p.completado?'Sí':'No'):''];
       cells+=`<row r="${row}">${values.map((v,c)=>cell(row,c,v,p.anulado?3:[6,7,8].includes(c)?2:0)).join('')}</row>`;row++;
       if(!p.anulado){total+=p.total;count++;by[p.metodo_pago]=(by[p.metodo_pago]||0)+p.total;}
     }

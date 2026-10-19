@@ -17,12 +17,12 @@
   async function applyUpdate(){
     if(reloading||!window.SuiloadAppReady)return;
     // Let modal workflows and inline saves finish before reloading.
-    if(document.querySelector('.modal-back.show')||document.activeElement?.closest('#tabla'))return;
+    if(document.querySelector('.modal-back.show')||document.activeElement?.closest('#tabla, #comanda-form'))return;
     reloading=true;
     try {
       await SuiloadLocal.ready();
       const draft={items:state.items,editId:state.editId,fecha:state.fecha,
-        order:fields('#pedido-form'),config:fields('#view-config'),
+        comanda:window.SuiloadComandas?.getDraft(),order:fields('#pedido-form'),config:fields('#view-config'),
         tab:document.querySelector('.tabs button.active')?.dataset.tab||'pedidos',
         configDirty:configDirty,focus:document.activeElement?.id};
       sessionStorage.setItem(draftKey,JSON.stringify(draft));
@@ -41,6 +41,7 @@
       state.items=draft.items;state.editId=draft.editId;
       fillRepartidorSelect(el('f-repartidor'),draft.order.find(f=>f.id==='f-repartidor')?.value||'');
       const restore=rows=>rows.forEach(f=>{const e=el(f.id);if(e){e.value=f.value;if(e.type==='checkbox'||e.type==='radio')e.checked=f.checked;}});
+      window.SuiloadComandas?.restoreDraft(draft.comanda);
       restore(draft.order);renderItems();toggleEnvio();toggleVuelto();recalc();
       el('form-title').textContent=draft.editId?'Editar pedido':'📝 Nuevo pedido';
       el('btn-guardar').textContent=draft.editId?'Guardar cambios':'Guardar pedido';

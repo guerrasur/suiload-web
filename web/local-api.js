@@ -2,7 +2,7 @@
 // Independent browser edition. IndexedDB is the authoritative database.
 // Each operation loads and commits within one exclusive cross-tab lock.
 (() => {
-  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", alerta_sin_facturar_habilitada:"false", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true", menu_configurado:"false"};
+  const defaults = {minutos_demora_salida:"30", hora_alerta_sin_facturar:"14:00", alerta_sin_facturar_habilitada:"false", hora_limite_pedidos:"13:40", costo_envio_default:"3000", direccion_local:"", ciudad_default:"", nombre_local:"", no_cobrar_envio_default:"false", tipo_pedido_default:"Envío", metodo_pago_default:"Efectivo", pago_efectivo_default:"", guardar_clientes_auto:"true", asignar_repartidor_auto:"true", buscar_actualizaciones_auto:"true", menu_configurado:"false", modo_uso:"delivery", modo_elegido:"false", mostrar_marcho:"true"};
   const fresh = () => ({schema:1, config:{...defaults}, platos:[], clientes:[], pedidos:[], cuentas:[], repartidores:{}, platosDia:{}, geocache:{}, seq:100});
   const today = () => new Date().toLocaleDateString("en-CA");
   const now = () => {const d=new Date(); return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,-1);};
@@ -51,10 +51,27 @@
   function validateOrder(p) {
     if(!["Envío","Reserva"].includes(p.tipo))throw Error("Tipo de pedido inválido");
     if(!["Efectivo","Transferencia","QR","Posnet"].includes(p.metodo_pago))throw Error("Método de pago inválido");
+    if(p.modo!=null&&!["delivery","comanda"].includes(p.modo))throw Error("Modo de pedido inválido");
+    if(p.modo==="comanda") {
+      if(!Array.isArray(p.items)||!p.items.length||p.items.some(i=>!String(i.nombre||"").trim()))throw Error("Agregá al menos un ítem con nombre.");
+      for(const key of ["marcho","listo","completado","pagado"])if(p[key]!=null&&typeof p[key]!=="boolean")throw Error("Estado de comanda inválido");
+      if(p.completado){p.marcho=true;p.listo=true;}
+    }
     normalizeDiscount(p);p.costo_envio=positive(p.costo_envio||0);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(p.fecha))throw Error("Fecha inválida");
     p.items.forEach(i=>{i.cantidad=Math.max(1,Math.trunc(Number(i.cantidad)||1));i.precio_unitario=positive(i.precio_unitario||0);});
     p.total=total(p).total;
+  }
+  function assignedNumber(s,fecha,value,mode,exceptId) {
+    if(value==null||String(value).trim()==="") {
+      if(mode!=="comanda")return number(s,fecha);
+      const used=new Set(s.pedidos.filter(p=>p.fecha===fecha&&p.id!==exceptId).map(p=>p.numero));
+      let n=1;while(used.has(n))n++;return n;
+    }
+    const n=Number(value);
+    if(!Number.isSafeInteger(n)||n<1)throw Error("El número de pedido debe ser un entero positivo.");
+    if(s.pedidos.some(p=>p.fecha===fecha&&p.id!==exceptId&&p.numero===n))throw Error("Ese número de pedido ya está usado en esta fecha.");
+    return n;
   }
   function number(s,fecha) {
     const used=new Set(s.pedidos.filter(p=>p.fecha===fecha).map(p=>p.numero));
@@ -83,10 +100,11 @@
     const parts=path.split("/").filter(Boolean).slice(1), [domain,id,action,subid,subaction]=parts;
     const fecha=q.get("fecha")||today();const next=()=>++s.seq;
     const day=()=>s.pedidos.filter(p=>p.fecha===fecha&&!p.anulado);
-    if(domain==="version")return {version:"1.0.4 web"};
+    if(domain==="version")return {version:"1.1.0 web"};
     if(domain==="config") {
       if(method==="PUT") {
         const cfg={...s.config,...b};
+        if(!["delivery","comanda"].includes(cfg.modo_uso))throw Error("Modo de uso inválido");
         if(!["Envío","Reserva"].includes(cfg.tipo_pedido_default))throw Error("Tipo predeterminado inválido");
         if(!["Efectivo","Transferencia","QR","Posnet"].includes(cfg.metodo_pago_default))throw Error("Medio de pago predeterminado inválido");
         for(const k of ["minutos_demora_salida","costo_envio_default"])if(!Number.isFinite(Number(cfg[k]))||Number(cfg[k])<0)throw Error("Ingresá valores positivos en demora y envío");
@@ -150,6 +168,9 @@
       if(method==="POST"){const p={...data,id:next()};s.platos.push(p);return p;}
       if(method==="PUT"){const p=find(s.platos,id,"Plato");Object.assign(p,data);return p;}
     }
+    if(domain==="comandas"&&id==="pendientes-cobro"&&method==="GET") {
+      return s.pedidos.filter(p=>p.modo==="comanda"&&!p.anulado&&!p.pagado&&p.fecha<today()).sort((a,b)=>a.fecha.localeCompare(b.fecha)||a.numero-b.numero).map(p=>out(p,s.config));
+    }
     if(domain==="pedidos") {
       if(id==="repartidores")return [...new Set(s.pedidos.map(p=>p.repartidor).filter(Boolean))].sort();
       if(id==="facturar-dia") {
@@ -159,14 +180,16 @@
       if(method==="GET")return s.pedidos.filter(p=>p.fecha===fecha).sort((a,b)=>a.hora_pedido.localeCompare(b.hora_pedido)||a.id-b.id).map(p=>out(p,s.config));
       if(method==="POST"&&!id) {
         const f=b.fecha||fecha;
-        const p={tipo:"Envío",cliente_nombre:"",cliente_direccion:"",cliente_telefono:"",indicaciones:"",items:[],costo_envio:0,no_cobrar_envio:false,descuento_tipo:null,descuento_valor:0,metodo_pago:"Efectivo",pago_efectivo_detalle:"",repartidor:"",notas:"",hora_salida_programada:null,...b,id:next(),fecha:f,numero:number(s,f),hora_pedido:now(),hora_salida:null,orden_ruta:null,facturado:false,hora_facturado:null,pagado:false,anulado:false};
+        const p={modo:"delivery",marcho:false,listo:false,completado:false,tipo:"Envío",cliente_nombre:"",cliente_direccion:"",cliente_telefono:"",indicaciones:"",items:[],costo_envio:0,no_cobrar_envio:false,descuento_tipo:null,descuento_valor:0,metodo_pago:"Efectivo",pago_efectivo_detalle:"",repartidor:"",notas:"",hora_salida_programada:null,...b,id:next(),fecha:f,numero:assignedNumber(s,f,b.numero,b.modo),hora_pedido:now(),hora_salida:null,orden_ruta:null,facturado:false,hora_facturado:null,pagado:false,anulado:false};
         p.items=p.items.map(i=>({...i,id:next()}));validateOrder(p);s.pedidos.push(p);return out(p,s.config);
       }
       const p=find(s.pedidos,id,"Pedido");
       if(method==="DELETE"){if(!p.anulado)throw Error("Sólo se pueden borrar definitivamente pedidos anulados.");remove(s.pedidos,id);return null;}
       if(action==="anular"||action==="restaurar"){p.anulado=action==="anular";return out(p,s.config);}
       if(method==="PATCH") {
-        if(b.fecha&&b.fecha!==p.fecha){b.numero=number(s,b.fecha);b.orden_ruta=null;}
+        if(p.modo==="comanda"&&b.completado!==true&&(b.listo===false||b.marcho===false))b.completado=false;
+        if(b.fecha&&b.fecha!==p.fecha){b.numero=assignedNumber(s,b.fecha,b.numero,p.modo,p.id);b.orden_ruta=null;}
+        else if(b.numero!==undefined)b.numero=assignedNumber(s,p.fecha,b.numero,p.modo,p.id);
         if(b.repartidor!==undefined&&b.repartidor!==p.repartidor&&b.orden_ruta===undefined)b.orden_ruta=null;
         if(b.facturado!==undefined)b.hora_facturado=b.facturado?(p.hora_facturado||now()):null;
         if(b.items)b.items=b.items.map(i=>({...i,id:next()}));
