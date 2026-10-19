@@ -736,18 +736,16 @@ tbody tr.fila-elegida > td { background: var(--hover-bg); }
 .co-pay[data-pay="Transferencia"], .co-pay[data-delivery-pay="Transferencia"] { background: #2f6fd0; border-color: #2456a6; color: #fff; }
 .co-pay[aria-pressed="false"] { filter: brightness(.65); opacity: .75; }
 .co-pay[aria-pressed="true"] { filter: none; opacity: 1; box-shadow: var(--focus-ring); }
-:root { --alias-height: 48px; --day-totals-height: 105px; --checkout-height: 85px; }
-body { padding-top: var(--alias-height); }
-header.topbar { top: var(--alias-height); }
-#alias-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 35; padding: .45rem 1.1rem; background: linear-gradient(110deg, #ffe59a, #f7bd4d); color: #392609; box-shadow: 0 2px 8px #0003; }
+:root { --day-totals-height: 105px; --checkout-height: 85px; }
+#alias-bar { position: static; min-width: 0; border-radius: var(--radius); padding: .7rem 1rem; background: var(--brand-soft); color: var(--ink); border: 1px solid var(--info-line); box-shadow: var(--shadow-sm); }
 #alias-display, #alias-form { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .4rem .8rem; }
-#alias-value { font-size: 1.1rem; font-weight: 850; letter-spacing: .03em; overflow-wrap: anywhere; }
-#alias-bar button { border: 1px solid #674a22; border-radius: 999px; padding: .25rem .75rem; background: #fff8df; color: #392609; font-weight: 650; }
+#alias-value { color: var(--brand-strong); font-size: 1.1rem; font-weight: 850; letter-spacing: .03em; overflow-wrap: anywhere; }
+#alias-bar button { border: 1px solid var(--line-strong); border-radius: 999px; padding: .25rem .75rem; background: var(--card); color: var(--brand); font-weight: 650; }
 #alias-form label { font-weight: 700; }
-#alias-form input:not([type="checkbox"]) { padding: .4rem .55rem; border: 1px solid #674a22; border-radius: 6px; background: #fffdf2; color: #392609; width: min(330px, 60vw); }
+#alias-form input:not([type="checkbox"]) { padding: .4rem .55rem; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--card); color: var(--ink); width: min(330px, 60vw); }
 .alias-lock { display: inline-flex; align-items: center; gap: .3rem; }
 #alias-bar.alias-fixed #alias-value { text-decoration: underline; text-underline-offset: .2rem; }
-#alias-error { color: #7b150d; font-weight: 700; }
+#alias-error { color: var(--danger); font-weight: 700; }
 #co-items, #items-list { height: clamp(150px, 24vh, 260px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: .3rem; }
 #co-items:empty::before, #items-list:empty::before { content: "Agregá los ítems del pedido. La lista se desplaza acá."; display: block; padding: 1rem .4rem; color: var(--muted); font-size: .85rem; }
 #view-pedidos { padding-bottom: calc(var(--day-totals-height) + var(--checkout-height) + 35px); }
@@ -773,4 +771,18 @@ header.topbar { top: var(--alias-height); }
   .order-checkout { width: calc(100% - 1.3rem); padding: .5rem .65rem; gap: .4rem; }
   .order-checkout .btn { padding: .5rem .6rem; }
   .order-checkout .total-box { font-size: 1.4rem; }
+}
+
+/* Alias belongs beside the workspace title and date, inside the page. */
+.workspace-heading { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(280px, 1.8fr) auto; align-items: center; gap: 1rem; }
+.workspace-day { justify-content: flex-end; flex-wrap: nowrap; }
+@media (max-width: 900px) {
+  .workspace-heading { grid-template-columns: minmax(0, 1fr) auto; }
+  #alias-bar { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 480px) {
+  .workspace-heading { gap: .7rem; }
+  .workspace-day { gap: .35rem; }
+  .workspace-day .field input { max-width: 140px; }
+  #workspace-heading-copy p { font-size: .8rem; }
 }

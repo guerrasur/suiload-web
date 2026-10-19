@@ -155,10 +155,11 @@ la versión actual desde Cloud Shell; no hace falta publicar versiones intermedi
 
 ## Alias y controles siempre visibles (web v1.1.1)
 
-La barra superior muestra **ALIAS:** con el texto destacado. Editar permite
+La cabecera del área de trabajo muestra **ALIAS:** con el texto destacado,
+entre el título de la vista y la fecha. Editar permite
 cambiarlo; Dejar fijo conserva el alias bloqueado hasta pulsar Desbloquear.
 También se puede configurar desde Configuración. Se guarda en este navegador,
-se incluye en las copias JSON y queda visible en ambas vistas. La app espera
+se incluye en las copias JSON y aparece en ambas vistas de pedidos. La app espera
 si se está editando el alias antes de aplicar una actualización automática.
 
 La lista de ítems tiene altura acotada y desplazamiento propio. El total del
@@ -174,3 +175,8 @@ Prueba adicional de navegador (con el mismo servidor y Playwright):
 ```bash
 node tests/web/workspace-browser.cjs
 ```
+
+En **web v1.1.2** el alias se ubica dentro de la página, entre Comandas (o
+Pedidos y reservas) y el selector de fecha. En pantallas pequeñas pasa a una
+fila propia debajo del título. Usa el azul de la aplicación, con el alias
+en negrita, y conserva la edición y el bloqueo del texto.

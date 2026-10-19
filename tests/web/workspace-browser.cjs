@@ -37,9 +37,15 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict');
  await page.reload();await page.waitForFunction(()=>window.SuiloadAppReady);assert.equal(await page.locator('#alias-value').textContent(),'mi.local.mp');assert.match(await page.locator('#alias-edit').textContent(),/Desbloquear/);
  await page.locator('#alias-edit').click();await page.locator('#alias-input').fill('No guardar');await page.locator('#alias-cancel').click();assert.equal(await page.locator('#alias-value').textContent(),'mi.local.mp');
  await page.locator('#alias-edit').click();await page.locator('#alias-input').fill('<b>mi.alias</b>');await page.locator('#alias-save').click();await page.locator('#alias-value').getByText('<b>mi.alias</b>',{exact:true}).waitFor();assert.equal(await page.locator('#alias-value b').count(),0);
- // The alias and both footer bars keep their own space after resize and scrolling.
- await page.evaluate(()=>scrollTo(0,document.body.scrollHeight));
- assert.equal(await page.locator('#alias-bar').evaluate(e=>e.getBoundingClientRect().top),0);
+ await page.locator('#alias-edit').click();await page.locator('#alias-input').fill('mi.local.mp');await page.locator('#alias-lock').check();await page.locator('#alias-save').click();await page.locator('#alias-value').getByText('mi.local.mp',{exact:true}).waitFor();
+ // The alias sits between the workspace title and date on desktop, and wraps on mobile.
+ await page.setViewportSize({width:1366,height:900});await page.evaluate(()=>scrollTo(0,0));
+ const alias=await page.locator('#alias-bar').boundingBox(),title=await page.locator('#workspace-heading-copy').boundingBox(),date=await page.locator('.workspace-day').boundingBox(),header=await page.locator('header.topbar').boundingBox();
+ assert.ok(alias.x>=title.x+title.width);assert.ok(date.x>=alias.x+alias.width);assert.ok(alias.y>=header.y+header.height);
+ assert.equal(await page.locator('#alias-bar').evaluate(e=>getComputedStyle(e).position),'static');
+ await page.screenshot({path:'/tmp/suiload-alias-desktop.png',animations:'disabled'});
+ await page.emulateMedia({colorScheme:'light'});await page.screenshot({path:'/tmp/suiload-alias-desktop-light.png',animations:'disabled'});
+ await page.setViewportSize({width:390,height:844});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
  await page.screenshot({path:'/tmp/suiload-workspace-mobile.png',animations:'disabled'});
  await page.locator('#usage-change').click();await page.locator('[data-mode=delivery]').click();await page.locator('#delivery-workspace').waitFor();
@@ -48,7 +54,7 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict');
  const deliveryAfter=await page.locator('#btn-guardar').boundingBox();assert.ok(Math.abs(deliveryAfter.y-deliveryBefore.y)<1);
  assert.equal(await page.locator('#day-export').isVisible(),true);
  assert.match(await page.locator('#day-total-value').textContent(),/650/);
- await page.locator('[data-tab=carta]').click();assert.equal(await page.locator('#day-totals').isVisible(),false);assert.equal(await page.locator('#alias-bar').isVisible(),true);
+ await page.locator('[data-tab=carta]').click();assert.equal(await page.locator('#day-totals').isVisible(),false);assert.equal(await page.locator('#alias-bar').isVisible(),false);
  assert.deepEqual(errors,[]);console.log('PASS browser: payment colors/emoji, stationary checkout with many items, daily subtotals and unpaid totals, daily XLSX, alias editing/locking/persistence and mobile layout in both views.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

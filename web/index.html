@@ -5,19 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Suiload — Suipacha Loader web</title>
   <link rel="icon" href="/icon.ico" />
-  <script src="/theme.js?v=1.1.1"></script>
-  <link rel="stylesheet" href="/styles.css?v=1.1.1" />
+  <script src="/theme.js?v=1.1.2"></script>
+  <link rel="stylesheet" href="/styles.css?v=1.1.2" />
 </head>
 <body>
-  <aside id="alias-bar" aria-label="Alias para transferencias">
-    <div id="alias-display"><span>ALIAS:</span> <strong id="alias-value">Configurar alias</strong><button type="button" id="alias-edit">✎ Editar</button></div>
-    <form id="alias-form" hidden>
-      <label for="alias-input">ALIAS:</label><input id="alias-input" maxlength="120" placeholder="mi.local.mp" autocomplete="off" />
-      <label class="alias-lock"><input type="checkbox" id="alias-lock" /> Dejar fijo 🔒</label>
-      <button type="submit" id="alias-save">Guardar</button><button type="button" id="alias-cancel">Cancelar</button>
-      <span id="alias-error" role="alert"></span>
-    </form>
-  </aside>
+
   <header class="topbar">
     <h1>🥗 <span id="local-name"></span>Suipacha Loader <span class="app-version" id="app-version"></span></h1>
     <button type="button" class="theme-toggle" id="theme-toggle" aria-pressed="false"><span id="theme-label">Modo oscuro</span></button>
@@ -40,11 +32,20 @@
     </div>
     <!-- ============ PEDIDOS ============ -->
     <section id="view-pedidos" class="view active">
+      <div class="workspace-heading comanda-heading">
+        <div id="workspace-heading-copy"><h2 id="workspace-title">Comandas</h2><p class="muted" id="workspace-description">Comprador, pago y qué lleva. Lo demás es opcional.</p></div>
+  <aside id="alias-bar" aria-label="Alias para transferencias">
+    <div id="alias-display"><span>ALIAS:</span> <strong id="alias-value">Configurar alias</strong><button type="button" id="alias-edit">✎ Editar</button></div>
+    <form id="alias-form" hidden>
+      <label for="alias-input">ALIAS:</label><input id="alias-input" maxlength="120" placeholder="mi.local.mp" autocomplete="off" />
+      <label class="alias-lock"><input type="checkbox" id="alias-lock" /> Dejar fijo 🔒</label>
+      <button type="submit" id="alias-save">Guardar</button><button type="button" id="alias-cancel">Cancelar</button>
+      <span id="alias-error" role="alert"></span>
+    </form>
+  </aside>
+        <div class="row workspace-day"><label class="field">Día <input type="date" id="co-fecha" /></label><button type="button" class="btn secondary" id="co-hoy">Hoy</button></div>
+      </div>
       <div id="comanda-workspace" hidden>
-        <div class="row between comanda-heading">
-          <div><h2>Comandas</h2><p class="muted">Comprador, pago y qué lleva. Lo demás es opcional.</p></div>
-          <div class="row"><label class="field">Día <input type="date" id="co-fecha" /></label><button type="button" class="btn secondary" id="co-hoy">Hoy</button></div>
-        </div>
         <div id="co-deudas" class="card" hidden></div>
         <div class="comanda-layout">
           <div class="card comanda-entry">
@@ -682,14 +683,14 @@
 
   <div id="toasts" aria-live="polite"></div>
 
-  <script src="/version.js?v=1.1.1"></script>
-  <script src="/routes.js?v=1.1.1"></script>
-  <script src="/local-api.js?v=1.1.1"></script>
-  <script src="/excel.js?v=1.1.1"></script>
-  <script src="/menu.js?v=1.1.1"></script>
-  <script src="/comandas.js?v=1.1.1"></script>
-  <script src="/workspace-ui.js?v=1.1.1"></script>
-  <script src="/app.js?v=1.1.1"></script>
-  <script src="/device.js?v=1.1.1"></script>
+  <script src="/version.js?v=1.1.2"></script>
+  <script src="/routes.js?v=1.1.2"></script>
+  <script src="/local-api.js?v=1.1.2"></script>
+  <script src="/excel.js?v=1.1.2"></script>
+  <script src="/menu.js?v=1.1.2"></script>
+  <script src="/comandas.js?v=1.1.2"></script>
+  <script src="/workspace-ui.js?v=1.1.2"></script>
+  <script src="/app.js?v=1.1.2"></script>
+  <script src="/device.js?v=1.1.2"></script>
 </body>
 </html>

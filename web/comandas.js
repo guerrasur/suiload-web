@@ -10,6 +10,8 @@
   function apply(cfg) {
     config = cfg;
     document.body.classList.toggle("comanda-mode",active());
+    el('workspace-title').textContent=active()?'Comandas':'Pedidos y reservas';
+    el('workspace-description').textContent=active()?'Comprador, pago y qué lleva. Lo demás es opcional.':'Pedidos, reservas y reparto para tu local.';
     if(!initialized){initialized=true;setPayment(config.metodo_pago_default||'Efectivo',false);}
     el('comanda-workspace').hidden = !active();
     el('delivery-workspace').hidden = active();
